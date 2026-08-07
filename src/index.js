@@ -307,7 +307,7 @@ async function checkSpamAndCount(ctx) {
   const newStatus = res.value || {};
   const spamCount = newStatus.spamCount || 0;
 
-  if (spamCount >= 10) {
+  if (spamCount >= 5) {
     const blockedUntil = new Date(now.valueOf() + 20 * 60 * 1000);
     const blockCount = (newStatus.blockCount || 0) + 1;
     const violationCount = (newStatus.violationCount || 0) + 1;
@@ -320,7 +320,7 @@ async function checkSpamAndCount(ctx) {
     const blockText = [
       `<b>ChatFight - User blocked</b>`,
       '',
-      `${escapeHtml(displayName)} has been blocked from the bot for <b>20 minutes</b> after sending 10 messages in under 3 seconds each.`,
+      `${escapeHtml(displayName)} has been blocked from the bot for <b>20 minutes</b> after sending 5 messages in under 3 seconds each.`,
       'Blocked users do not earn ranking points and cannot use bot commands until the block expires.',
     ].join('\n');
 
