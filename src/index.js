@@ -3,7 +3,7 @@ import { Telegraf } from 'telegraf';
 import { MongoClient } from 'mongodb';
 import { formatRankingText, getUserUpdateForMessage, getWeekKey } from './rankingLogic.js';
 import { formatProfileText } from './profileLogic.js';
-import { formatGlobalUsersText, formatGlobalGroupsText } from './globalLogic.js';
+import { formatGlobalUsersText, formatGlobalGroupsText, formatMyTopGroupsText } from './globalLogic.js';
 
 function escapeHtml(value = '') {
   return String(value)
@@ -269,6 +269,8 @@ async function checkSpamAndCount(ctx) {
   const usernameValue = message.from?.username || '';
   const displayName = normalizeDisplayName(rawName || usernameValue || 'Unknown');
   const userName = normalizeUsername(usernameValue);
+  const groupName = ctx.chat?.title || ctx.chat?.username || `Group ${groupId}`;
+  const groupLink = ctx.chat?.username ? `https://t.me/${ctx.chat.username}` : null;
 
   const { groupStatus } = await getUserStatus(userId, groupId);
   const now = new Date();
@@ -307,16 +309,16 @@ async function checkSpamAndCount(ctx) {
     spamCount,
   });
 
-  await getOrCreateUser(groupId, userId, displayName, userName);
+  await getOrCreateUser(groupId, userId, displayName, userName, groupName, groupLink);
   await recordGroupMilestone(groupId, ctx);
 }
 
-async function getOrCreateUser(groupId, userId, displayName, userName) {
+async function getOrCreateUser(groupId, userId, displayName, userName, groupName, groupLink) {
   const database = await connectDb();
   const users = database.collection('group_users');
   const now = new Date();
   const existing = await users.findOne({ groupId, userId });
-  const updatePlan = getUserUpdateForMessage(existing, groupId, userId, displayName, userName, now);
+  const updatePlan = getUserUpdateForMessage(existing, groupId, userId, displayName, userName, groupName, groupLink, now);
 
   if (updatePlan.operation === 'insert') {
     await users.insertOne(updatePlan.doc);
@@ -449,7 +451,12 @@ async function getGlobalGroups(mode = 'today') {
 
   const entries = await users.aggregate([
     { $match: match },
-    { $group: { _id: '$groupId', groupName: { $first: '$groupName' }, value: { $sum: valueField } } },
+    { $group: {
+      _id: '$groupId',
+      groupName: { $first: '$groupName' },
+      groupLink: { $first: '$groupLink' },
+      value: { $sum: valueField },
+    } },
     { $sort: { value: -1, _id: 1 } },
     { $limit: 10 },
   ]).toArray();
@@ -460,6 +467,16 @@ async function getGlobalGroups(mode = 'today') {
   ]).toArray();
 
   return entries.map((entry) => ({ ...entry, value: entry.value || 0, totalValue: totalResult[0]?.total || 0 }));
+}
+
+async function getUserTopGroups(userId) {
+  const database = await connectDb();
+  const users = database.collection('group_users');
+  return users.aggregate([
+    { $match: { userId } },
+    { $sort: { messageCount: -1 } },
+    { $project: { groupId: 1, groupName: 1, groupLink: 1, messageCount: 1 } },
+  ]).toArray();
 }
 
 function isOwner(userId) {
@@ -599,6 +616,26 @@ bot.command('topgroups', async (ctx) => {
   const contextName = ctx.chat?.title || ctx.chat?.username || 'this chat';
   const message = formatGlobalGroupsText(entries, 'today', contextName);
   await sendOrEditMessage(ctx, message, { reply_markup: buildRankingKeyboard('topgroups') });
+});
+
+bot.command('mytop', async (ctx) => {
+  const groupId = ctx.chat?.type === 'private' ? null : ctx.chat.id.toString();
+  if (await maybeRejectUser(ctx, groupId)) return;
+  const userId = ctx.from?.id?.toString();
+  if (!userId) {
+    await sendOrEditMessage(ctx, 'Unable to read your user ID.');
+    return;
+  }
+
+  const entries = await getUserTopGroups(userId);
+  if (!entries.length) {
+    await sendOrEditMessage(ctx, 'No ranking data found for you yet.');
+    return;
+  }
+
+  const displayName = ctx.from?.first_name || ctx.from?.username || 'You';
+  const message = formatMyTopGroupsText(entries, displayName);
+  await sendOrEditMessage(ctx, message);
 });
 
 bot.command('inspect', async (ctx) => {

@@ -10,6 +10,21 @@ function normalizeDisplayName(value = '') {
   return String(value || '').trim();
 }
 
+function normalizeUsername(value = '') {
+  const raw = String(value || '').trim();
+  if (!raw) return raw;
+  const stripped = raw.startsWith('@') ? raw.slice(1) : raw;
+  return stripped;
+}
+
+function buildUserLink(user) {
+  const name = escapeHtml(normalizeDisplayName(user.displayName || user.userName || `User ${user.userId}`));
+  const userId = user.userId;
+  const username = normalizeUsername(user.userName);
+  const href = userId ? `tg://user?id=${userId}` : username ? `https://t.me/${username}` : null;
+  return href ? `<a href="${escapeHtml(href)}">${name}</a>` : name;
+}
+
 export function getWeekKey(date) {
   const copy = new Date(date);
   const day = copy.getUTCDay() || 7;
@@ -23,8 +38,8 @@ export function formatRankingText(topUsers, totalValue, mode = 'today', contextN
   const totalLabel = mode === 'total' ? 'All-time total' : mode === 'weekly' ? 'Week total' : 'Today total';
 
   const lines = topUsers.map((user, index) => {
-    const name = escapeHtml(normalizeDisplayName(user.displayName || user.userName || `User ${user.userId}`));
-    return `<b>${index + 1}.</b> <b>${name}</b> — ${user[metricKey] ?? 0}`;
+    const nameLink = buildUserLink(user);
+    return `<b>${index + 1}.</b> <b>${nameLink}</b> — ${user[metricKey] ?? 0}`;
   });
 
   const modeLabel = mode === 'total' ? 'Total' : mode === 'weekly' ? 'Weekly' : 'Today';
@@ -41,7 +56,7 @@ export function formatRankingText(topUsers, totalValue, mode = 'today', contextN
   ].join('\n');
 }
 
-export function getUserUpdateForMessage(existingUser, groupId, userId, displayName, userName, now = new Date()) {
+export function getUserUpdateForMessage(existingUser, groupId, userId, displayName, userName, groupName, groupLink, now = new Date()) {
   const dayKey = now.toISOString().slice(0, 10);
   const weekKey = getWeekKey(now);
 
@@ -53,6 +68,8 @@ export function getUserUpdateForMessage(existingUser, groupId, userId, displayNa
         userId,
         displayName,
         userName,
+        groupName,
+        groupLink,
         messageCount: 1,
         dailyMessageCount: 1,
         weeklyMessageCount: 1,
@@ -78,6 +95,8 @@ export function getUserUpdateForMessage(existingUser, groupId, userId, displayNa
       $set: {
         displayName,
         userName,
+        groupName,
+        groupLink,
         dayKey,
         weekKey,
         dailyMessageCount,
