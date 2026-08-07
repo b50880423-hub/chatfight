@@ -11,6 +11,7 @@ const mongoUri = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017';
 const dbName = process.env.MONGODB_DB_NAME || 'chatfight';
 const loggerChatId = getLoggerChatId(process.env);
 const publicGroupLink = process.env.PUBLIC_GROUP_LINK || '';
+const ownerId = process.env.OWNER_ID || '';
 
 if (!token) {
   console.error('TELEGRAM_BOT_TOKEN is required');
@@ -187,6 +188,10 @@ async function getGlobalGroups(mode = 'today') {
   return entries.map((entry) => ({ ...entry, value: entry.value || 0, totalValue: totalResult[0]?.total || 0 }));
 }
 
+function isOwner(userId) {
+  return ownerId && String(userId) === String(ownerId);
+}
+
 async function sendLoggerMessage(message) {
   if (!loggerChatId) return;
   try {
@@ -268,6 +273,29 @@ bot.command('topgroups', async (ctx) => {
   const entries = await getGlobalGroups('today');
   const message = formatGlobalGroupsText(entries, 'today');
   await ctx.reply(message, { reply_markup: buildRankingKeyboard('topgroups') });
+});
+
+bot.command('inspect', async (ctx) => {
+  if (!isOwner(ctx.from?.id)) {
+    await ctx.reply('Only the owner can use this command.');
+    return;
+  }
+
+  const database = await connectDb();
+  const users = database.collection('group_users');
+  const entries = await users
+    .find({})
+    .sort({ messageCount: -1, dailyMessageCount: -1 })
+    .limit(30)
+    .toArray();
+
+  if (!entries.length) {
+    await ctx.reply('No user data found yet.');
+    return;
+  }
+
+  const lines = entries.map((entry, index) => `${index + 1}. ${entry.userName || `User ${entry.userId}`} | ${entry.groupId} | total=${entry.messageCount || 0} | today=${entry.dailyMessageCount || 0}`);
+  await ctx.reply(['Owner inspection:', ...lines].join('\n'));
 });
 
 bot.command('profile', async (ctx) => {
