@@ -77,7 +77,7 @@ export async function registerMiniGameGroup(db, groupId, groupName, groupLink = 
     { groupId },
     {
       $set: { groupName, groupLink, updatedAt: now },
-      $setOnInsert: { groupId, nextGameAt: nextHourFrom(now), activeRound: null, createdAt: now },
+      $setOnInsert: { groupId, nextGameAt: now, activeRound: null, createdAt: now },
     },
     { upsert: true },
   );
