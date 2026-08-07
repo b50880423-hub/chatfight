@@ -5,6 +5,7 @@ import { formatRankingText, getUserUpdateForMessage, getWeekKey } from './rankin
 import { formatProfileText } from './profileLogic.js';
 import { formatGlobalUsersText, formatGlobalGroupsText } from './globalLogic.js';
 import { buildLoggerMessage, getLoggerChatId } from './logger.js';
+import { createHealthServer } from './health.js';
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const mongoUri = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017';
@@ -237,26 +238,35 @@ bot.start(async (ctx) => {
 function buildRankingKeyboard(prefix = 'rankings') {
   return {
     inline_keyboard: [
+      [{ text: '📈 Total', callback_data: `${prefix}:total` }],
       [
         { text: '📅 Today', callback_data: `${prefix}:today` },
-        { text: '📈 Total', callback_data: `${prefix}:total` },
         { text: '🗓️ Weekly', callback_data: `${prefix}:weekly` },
       ],
     ],
   };
 }
 
+async function sendOrEditMessage(ctx, text, options = {}) {
+  if (ctx.callbackQuery?.message) {
+    return ctx.editMessageText(text, { parse_mode: 'HTML', ...options });
+  }
+
+  return ctx.reply(text, { parse_mode: 'HTML', ...options });
+}
+
 async function sendRankingReply(ctx, mode = 'today') {
   const groupId = ctx.chat.id.toString();
+  const contextName = ctx.chat?.title || ctx.chat?.username || 'this chat';
   const { topUsers, totalValue } = await getTopUsers(groupId, mode);
 
   if (!topUsers.length) {
-    await ctx.reply('No activity yet in this group.', { reply_markup: buildRankingKeyboard() });
+    await sendOrEditMessage(ctx, 'No activity yet in this group.', { reply_markup: buildRankingKeyboard() });
     return;
   }
 
-  const message = formatRankingText(topUsers, totalValue, mode);
-  await ctx.reply(message, { reply_markup: buildRankingKeyboard() });
+  const message = formatRankingText(topUsers, totalValue, mode, contextName);
+  await sendOrEditMessage(ctx, message, { reply_markup: buildRankingKeyboard() });
 }
 
 bot.command(['rankings', 'ranking'], async (ctx) => {
@@ -265,14 +275,16 @@ bot.command(['rankings', 'ranking'], async (ctx) => {
 
 bot.command('topuser', async (ctx) => {
   const entries = await getGlobalUsers('today');
-  const message = formatGlobalUsersText(entries, 'today');
-  await ctx.reply(message, { reply_markup: buildRankingKeyboard('topuser') });
+  const contextName = ctx.chat?.title || ctx.chat?.username || 'this chat';
+  const message = formatGlobalUsersText(entries, 'today', contextName);
+  await sendOrEditMessage(ctx, message, { reply_markup: buildRankingKeyboard('topuser') });
 });
 
 bot.command('topgroups', async (ctx) => {
   const entries = await getGlobalGroups('today');
-  const message = formatGlobalGroupsText(entries, 'today');
-  await ctx.reply(message, { reply_markup: buildRankingKeyboard('topgroups') });
+  const contextName = ctx.chat?.title || ctx.chat?.username || 'this chat';
+  const message = formatGlobalGroupsText(entries, 'today', contextName);
+  await sendOrEditMessage(ctx, message, { reply_markup: buildRankingKeyboard('topgroups') });
 });
 
 bot.command('inspect', async (ctx) => {
@@ -303,19 +315,20 @@ bot.command('profile', async (ctx) => {
   const userId = ctx.from?.id?.toString();
 
   if (!userId) {
-    await ctx.reply('Unable to read your profile right now.');
+    await sendOrEditMessage(ctx, 'Unable to read your profile right now.');
     return;
   }
 
   const profileData = await getUserProfile(groupId, userId);
 
   if (!profileData) {
-    await ctx.reply('You have no activity in this group yet.');
+    await sendOrEditMessage(ctx, 'You have no activity in this group yet.');
     return;
   }
 
-  const message = formatProfileText(profileData.profile, profileData.rank, profileData.totalUsers);
-  await ctx.reply(message);
+  const contextName = ctx.chat?.title || ctx.chat?.username || 'this chat';
+  const message = formatProfileText(profileData.profile, profileData.rank, profileData.totalUsers, contextName);
+  await sendOrEditMessage(ctx, message);
 });
 
 bot.action('welcome:rankings', async (ctx) => {
@@ -329,18 +342,19 @@ bot.action('welcome:profile', async (ctx) => {
   const userId = ctx.from?.id?.toString();
 
   if (!userId) {
-    await ctx.reply('Unable to read your profile right now.');
+    await sendOrEditMessage(ctx, 'Unable to read your profile right now.');
     return;
   }
 
   const profileData = await getUserProfile(groupId, userId);
   if (!profileData) {
-    await ctx.reply('You have no activity in this group yet.');
+    await sendOrEditMessage(ctx, 'You have no activity in this group yet.');
     return;
   }
 
-  const message = formatProfileText(profileData.profile, profileData.rank, profileData.totalUsers);
-  await ctx.reply(message);
+  const contextName = ctx.chat?.title || ctx.chat?.username || 'this chat';
+  const message = formatProfileText(profileData.profile, profileData.rank, profileData.totalUsers, contextName);
+  await sendOrEditMessage(ctx, message);
 });
 
 bot.action(/rankings:(today|total|weekly)/, async (ctx) => {
@@ -352,17 +366,19 @@ bot.action(/rankings:(today|total|weekly)/, async (ctx) => {
 bot.action(/topuser:(today|total|weekly)/, async (ctx) => {
   const mode = ctx.match[1];
   await ctx.answerCbQuery();
+  const contextName = ctx.chat?.title || ctx.chat?.username || 'this chat';
   const entries = await getGlobalUsers(mode);
-  const message = formatGlobalUsersText(entries, mode);
-  await ctx.reply(message, { reply_markup: buildRankingKeyboard('topuser') });
+  const message = formatGlobalUsersText(entries, mode, contextName);
+  await sendOrEditMessage(ctx, message, { reply_markup: buildRankingKeyboard('topuser') });
 });
 
 bot.action(/topgroups:(today|total|weekly)/, async (ctx) => {
   const mode = ctx.match[1];
   await ctx.answerCbQuery();
+  const contextName = ctx.chat?.title || ctx.chat?.username || 'this chat';
   const entries = await getGlobalGroups(mode);
-  const message = formatGlobalGroupsText(entries, mode);
-  await ctx.reply(message, { reply_markup: buildRankingKeyboard('topgroups') });
+  const message = formatGlobalGroupsText(entries, mode, contextName);
+  await sendOrEditMessage(ctx, message, { reply_markup: buildRankingKeyboard('topgroups') });
 });
 
 bot.on('my_chat_member', async (ctx) => {
@@ -397,6 +413,12 @@ bot.on('message', async (ctx) => {
 
 async function start() {
   await ensureIndexes();
+
+  const healthServer = createHealthServer();
+  healthServer.listen(process.env.HEALTH_PORT || 3001, () => {
+    console.log('Health server listening');
+  });
+
   await bot.launch();
   console.log('Bot started');
 }

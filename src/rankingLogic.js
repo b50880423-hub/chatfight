@@ -1,3 +1,11 @@
+function escapeHtml(value = '') {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 export function getWeekKey(date) {
   const copy = new Date(date);
   const day = copy.getUTCDay() || 7;
@@ -5,17 +13,25 @@ export function getWeekKey(date) {
   return `${copy.getUTCFullYear()}-${String(copy.getUTCMonth() + 1).padStart(2, '0')}-${String(copy.getUTCDate()).padStart(2, '0')}`;
 }
 
-export function formatRankingText(topUsers, totalValue, mode = 'today') {
+export function formatRankingText(topUsers, totalValue, mode = 'today', contextName = 'this chat') {
   const metricKey = mode === 'total' ? 'messageCount' : mode === 'weekly' ? 'weeklyMessageCount' : 'dailyMessageCount';
   const title = mode === 'total' ? 'Top users overall:' : mode === 'weekly' ? 'Top users this week:' : 'Top users today:';
   const totalLabel = mode === 'total' ? 'All-time total' : mode === 'weekly' ? 'Week total' : 'Today total';
 
-  const lines = topUsers.map((user, index) => `${index + 1}. ${user.userName || `User ${user.userId}`} — ${user[metricKey] ?? 0}`);
+  const lines = topUsers.map((user, index) => {
+    const name = escapeHtml(user.userName || `User ${user.userId}`);
+    return `<b>${index + 1}.</b> <b>${name}</b> — ${user[metricKey] ?? 0}`;
+  });
+
   return [
-    title,
+    '<b>ChatFight - Rankings</b>',
+    `<b>Group:</b> ${escapeHtml(contextName)}`,
+    '<b>Mode:</b> Total | Today | Weekly',
+    '',
+    `<b>${title}</b>`,
     ...lines,
     '',
-    `${totalLabel}: ${totalValue}`,
+    `<b>${totalLabel}:</b> ${totalValue}`,
   ].join('\n');
 }
 
