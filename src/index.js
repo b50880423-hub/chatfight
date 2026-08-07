@@ -77,7 +77,6 @@ async function ensureIndexes() {
   await groupStats.createIndex({ groupId: 1 }, { unique: true });
 }
 
-const MILESTONES = [500, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 11000, 12000, 13000, 14000, 15000, 20000, 25000, 30000, 40000, 50000, 60000, 70000, 80000, 90000, 100000];
 const BAN_OPTIONS = {
   '1d': { label: '1 day', days: 1 },
   '2d': { label: '2 days', days: 2 },
@@ -273,17 +272,43 @@ function buildBanKeyboard(userId) {
 
 async function recordGroupMilestone(groupId, ctx) {
   const database = await connectDb();
-  const groupStats = database.collection('group_stats');
-  const result = await groupStats.findOneAndUpdate(
-    { groupId },
-    { $inc: { totalMessageCount: 1 }, $setOnInsert: { createdAt: new Date() } },
-    { upsert: true, returnDocument: 'after' },
-  );
+  const users = database.collection('group_users');
 
-  const total = result?.totalMessageCount || 0;
-  if (MILESTONES.includes(total)) {
-    const groupName = ctx.chat?.title || ctx.chat?.username || 'this group';
-    await ctx.reply(`🎉 ${groupName} has crossed ${total} total bot-tracked messages! Keep the fight going!`);
+  const now = new Date();
+  const dayKey = now.toISOString().slice(0, 10);
+
+  const result = await users.aggregate([
+    {
+      $match: {
+        groupId,
+        dayKey,
+      },
+    },
+    {
+      $group: {
+        _id: null,
+        todayTotal: {
+          $sum: { $ifNull: ['$dailyMessageCount', 0] },
+        },
+      },
+    },
+  ]).toArray();
+
+  const todayTotal = result[0]?.todayTotal || 0;
+
+  // Daily milestones: 500, 1000, 1500, 2000, 2500...
+  if (todayTotal > 0 && todayTotal % 500 === 0) {
+    const groupName =
+      ctx.chat?.title ||
+      ctx.chat?.username ||
+      'this group';
+
+    await ctx.reply(
+      `🎉 <b>${groupName}</b>\n\n` +
+      `🔥 <b>${todayTotal.toLocaleString()}</b> messages reached today!\n` +
+      `📊 Keep the chat going!`,
+      { parse_mode: 'HTML' }
+    );
   }
 }
 
