@@ -671,7 +671,7 @@ async function sendOrEditMessage(ctx, text, options = {}) {
   return ctx.reply(text, { parse_mode: 'HTML', ...options });
 }
 
-async function maybeRejectUser(ctx, groupId = null) {
+async function maybeRejectUser(ctx, groupId = null, notify = true) {
   const userId = ctx.from?.id?.toString();
   if (!userId) return false;
 
@@ -698,12 +698,16 @@ async function maybeRejectUser(ctx, groupId = null) {
   }
 
   if (isGloballyBlocked) {
-    await ctx.reply(buildBlockMessage(ctx.from?.first_name || ctx.from?.username || 'You', globalStatus.blockedUntil), { parse_mode: 'HTML' });
+    if (notify) {
+      await ctx.reply(buildBlockMessage(ctx.from?.first_name || ctx.from?.username || 'You', globalStatus.blockedUntil), { parse_mode: 'HTML' });
+    }
     return true;
   }
 
   if (isGroupBlocked) {
-    await ctx.reply(buildBlockMessage(ctx.from?.first_name || ctx.from?.username || 'You', groupStatus.blockedUntil), { parse_mode: 'HTML' });
+    if (notify) {
+      await ctx.reply(buildBlockMessage(ctx.from?.first_name || ctx.from?.username || 'You', groupStatus.blockedUntil), { parse_mode: 'HTML' });
+    }
     return true;
   }
 
@@ -970,19 +974,22 @@ bot.on('message', async (ctx) => {
   if (!ctx.chat || ctx.chat.type === 'private') return;
 
   const groupId = ctx.chat.id.toString();
-  if (await maybeRejectUser(ctx, groupId)) return;
+  // Do not answer every ordinary message during the cooldown. The single
+  // Rule 5 notice is sent when the block is created; later messages are
+  // ignored silently until the block expires.
+  if (await maybeRejectUser(ctx, groupId, false)) return;
 
   await checkSpamAndCount(ctx);
 });
 
 async function start() {
-  await ensureIndexes();
-
   const healthServer = createHealthServer();
-  healthServer.listen(process.env.HEALTH_PORT || 3001, () => {
+  const healthPort = process.env.PORT || process.env.HEALTH_PORT || 3001;
+  healthServer.listen(healthPort, '0.0.0.0', () => {
     console.log('Health server listening');
   });
 
+  await ensureIndexes();
   await bot.launch();
   console.log('Bot started');
 }

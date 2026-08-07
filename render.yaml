@@ -11,3 +11,13 @@ services:
         value: production
       - key: HEALTH_PORT
         value: 10000
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: MONGODB_URI
+        sync: false
+      - key: MONGODB_DB_NAME
+        value: chatfight
+      - key: LOGGER_GROUP_ID
+        sync: false
+      - key: OWNER_ID
+        sync: false
