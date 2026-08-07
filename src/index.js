@@ -1101,18 +1101,58 @@ async function start() {
   // Recover persisted hourly mini-games after restarts. Existing groups keep
   // their saved nextGameAt; new groups get their first game one hour later.
   const database = await connectDb();
-  const knownGroups = await database.collection('group_users').distinct('groupId');
   const startupNow = new Date();
-  for (const groupId of knownGroups) {
-    const sample = await database.collection('group_users').findOne({ groupId });
-    await registerMiniGameGroup(database, groupId, sample?.groupName || `Group ${groupId}`, sample?.groupLink || null);
-    // Start the first mini-game immediately after this bot startup. The game
-    // itself schedules the following round one hour after it starts.
+
+  // Get groups from both existing group data and group stats.
+  const groupIds = new Set();
+
+  const userGroupIds = await database
+    .collection('group_users')
+    .distinct('groupId');
+
+  for (const id of userGroupIds) {
+    if (id !== null && id !== undefined) {
+      groupIds.add(String(id));
+    }
+  }
+
+  const statGroupIds = await database
+    .collection('group_stats')
+    .distinct('groupId');
+
+  for (const id of statGroupIds) {
+    if (id !== null && id !== undefined) {
+      groupIds.add(String(id));
+    }
+  }
+
+  console.log(`[MiniGame] Found ${groupIds.size} group(s) for startup`);
+
+  for (const groupId of groupIds) {
+    const sample =
+      await database.collection('group_users').findOne({ groupId }) ||
+      await database.collection('group_stats').findOne({ groupId });
+
+    await registerMiniGameGroup(
+      database,
+      groupId,
+      sample?.groupName || `Group ${groupId}`,
+      sample?.groupLink || null
+    );
+
+    // Force the first game to be due immediately.
     await database.collection('mini_game_groups').updateOne(
       { groupId, activeRound: null },
-      { $set: { nextGameAt: startupNow, updatedAt: startupNow } },
+      {
+        $set: {
+          nextGameAt: startupNow,
+          updatedAt: startupNow
+        }
+      }
     );
   }
+
+  console.log('[MiniGame] Startup scheduling completed');
 
   await bot.launch();
   console.log('Bot started');
