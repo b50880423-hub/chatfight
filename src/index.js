@@ -15,7 +15,7 @@ import { buildLoggerMessage, getLoggerChatId } from './logger.js';
 import { createHealthServer } from './health.js';
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
-const mongoUri = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017';
+const mongoUri = process.env.MONGODB_URI || (process.env.NODE_ENV === 'development' ? 'mongodb://127.0.0.1:27017' : null);
 const dbName = process.env.MONGODB_DB_NAME || 'chatfight';
 const loggerChatId = getLoggerChatId(process.env);
 const publicGroupLink = process.env.PUBLIC_GROUP_LINK || '';
@@ -23,6 +23,11 @@ const ownerId = process.env.OWNER_ID || '';
 
 if (!token) {
   console.error('TELEGRAM_BOT_TOKEN is required');
+  process.exit(1);
+}
+
+if (!mongoUri) {
+  console.error('MONGODB_URI is required in production to preserve rankings across deploys.');
   process.exit(1);
 }
 
@@ -46,12 +51,12 @@ async function ensureIndexes() {
   await users.createIndex({ groupId: 1, dayKey: 1 });
 }
 
-async function getOrCreateUser(groupId, userId, userName) {
+async function getOrCreateUser(groupId, userId, displayName, userName) {
   const database = await connectDb();
   const users = database.collection('group_users');
   const now = new Date();
   const existing = await users.findOne({ groupId, userId });
-  const updatePlan = getUserUpdateForMessage(existing, groupId, userId, userName, now);
+  const updatePlan = getUserUpdateForMessage(existing, groupId, userId, displayName, userName, now);
 
   if (updatePlan.operation === 'insert') {
     await users.insertOne(updatePlan.doc);
@@ -84,11 +89,12 @@ async function getTopUsers(groupId, mode = 'today') {
     query.dayKey = dayKey;
   }
 
-  const topUsers = await users
-    .find(query)
-    .sort({ [sortField]: -1, messageCount: -1 })
-    .limit(10)
-    .toArray();
+  const topUsers = await users.aggregate([
+    { $match: query },
+    { $sort: { [sortField]: -1, messageCount: -1 } },
+    { $limit: 10 },
+    { $project: { displayName: 1, userName: 1, userId: 1, messageCount: 1, dailyMessageCount: 1, weeklyMessageCount: 1 } },
+  ]).toArray();
 
   const totalResult = await users.aggregate([
     { $match: query },
@@ -149,8 +155,8 @@ async function getGlobalUsers(mode = 'today') {
 
   const entries = await users.aggregate([
     { $match: match },
-    { $group: { _id: '$userId', userName: { $first: '$userName' }, value: { $sum: valueField } } },
-    { $sort: { value: -1, userName: 1 } },
+    { $group: { _id: '$userId', userName: { $first: '$userName' }, displayName: { $first: '$displayName' }, value: { $sum: valueField } } },
+    { $sort: { value: -1, displayName: 1, userName: 1 } },
     { $limit: 10 },
   ]).toArray();
 
@@ -411,13 +417,14 @@ bot.on('message', async (ctx) => {
 
   const groupId = ctx.chat.id.toString();
   const userId = message.from?.id?.toString();
-  const userName = normalizeDisplayName(
-    [message.from?.first_name, message.from?.last_name].filter(Boolean).join(' ') || message.from?.username || 'Unknown',
-  );
+  const rawName = [message.from?.first_name, message.from?.last_name].filter(Boolean).join(' ');
+  const usernameValue = message.from?.username || '';
+  const displayName = normalizeDisplayName(rawName || usernameValue || 'Unknown');
+  const userName = normalizeDisplayName(usernameValue);
 
   if (!userId) return;
 
-  await getOrCreateUser(groupId, userId, userName);
+  await getOrCreateUser(groupId, userId, displayName, userName);
 });
 
 async function start() {

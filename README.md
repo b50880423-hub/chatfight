@@ -30,8 +30,12 @@ This starter project adds a Telegram group bot with:
 ## Environment variables
 
 - TELEGRAM_BOT_TOKEN: your Telegram bot token
-- MONGODB_URI: MongoDB connection string
+- MONGODB_URI: MongoDB connection string (required for deploy persistence)
 - MONGODB_DB_NAME: database name to use
+
+## Persistent storage
+
+This bot stores rankings in MongoDB. For deploys, use a remote or managed MongoDB instance so data is preserved across restarts and redeploys. A local MongoDB instance on `127.0.0.1` is only suitable for development.
 
 ## Current behavior
 
