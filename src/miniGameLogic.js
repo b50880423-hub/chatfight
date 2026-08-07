@@ -83,8 +83,11 @@ export async function registerMiniGameGroup(db, groupId, groupName, groupLink = 
   );
 }
 
-function chooseWord() {
-  return WORDS[Math.floor(Math.random() * WORDS.length)];
+function chooseWord(previousWord = '') {
+  const previous = normalizeAnswer(previousWord);
+  const available = WORDS.filter((word) => normalizeAnswer(word) !== previous);
+  const pool = available.length ? available : WORDS;
+  return pool[Math.floor(Math.random() * pool.length)];
 }
 
 export async function startDueMiniGames({ db, telegram, logger = console }) {
@@ -93,9 +96,10 @@ export async function startDueMiniGames({ db, telegram, logger = console }) {
   const due = await games.find({ nextGameAt: { $lte: now }, activeRound: null }).limit(50).toArray();
 
   for (const game of due) {
+    const word = chooseWord(game.lastWord || '');
     const claimed = await games.findOneAndUpdate(
       { _id: game._id, activeRound: null, nextGameAt: { $lte: now } },
-      { $set: { activeRound: { word: chooseWord(), startedAt: now, expiresAt: new Date(now.getTime() + GAME_DURATION_MS) }, nextGameAt: new Date(now.getTime() + GAME_INTERVAL_MS), updatedAt: now } },
+      { $set: { activeRound: { word, startedAt: now, expiresAt: new Date(now.getTime() + GAME_DURATION_MS) }, lastWord: word, nextGameAt: new Date(now.getTime() + GAME_INTERVAL_MS), updatedAt: now } },
       { returnDocument: 'after' },
     );
     if (!claimed?.activeRound) continue;
@@ -122,10 +126,21 @@ export async function startDueMiniGames({ db, telegram, logger = console }) {
 export async function expireMiniGames(db) {
   const games = db.collection('mini_game_groups');
   const now = new Date();
-  await games.updateMany(
-    { 'activeRound.expiresAt': { $lte: now } },
-    { $set: { activeRound: null, nextGameAt: new Date(new Date(round.startedAt).getTime() + GAME_INTERVAL_MS), updatedAt: now } },
-  );
+  const expired = await games.find({ 'activeRound.expiresAt': { $lte: now } }).toArray();
+  for (const game of expired) {
+    const startedAt = new Date(game.activeRound.startedAt);
+    await games.updateOne(
+      { _id: game._id, 'activeRound.startedAt': game.activeRound.startedAt },
+      {
+        $set: {
+          activeRound: null,
+          // Keep the one-hour schedule measured from the game's start.
+          nextGameAt: new Date(startedAt.getTime() + GAME_INTERVAL_MS),
+          updatedAt: now,
+        },
+      },
+    );
+  }
 }
 
 export async function handleMiniGameAnswer({ db, ctx }) {

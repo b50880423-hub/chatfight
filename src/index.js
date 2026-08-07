@@ -130,7 +130,6 @@ function formatRemainingTime(date) {
 
 async function getUserStatus(userId, groupId = null) {
   const database = await connectDb();
-  await registerMiniGameGroup(database, groupId, groupName, groupLink);
   const statuses = database.collection('user_status');
   const now = new Date();
 
@@ -1103,9 +1102,16 @@ async function start() {
   // their saved nextGameAt; new groups get their first game one hour later.
   const database = await connectDb();
   const knownGroups = await database.collection('group_users').distinct('groupId');
+  const startupNow = new Date();
   for (const groupId of knownGroups) {
     const sample = await database.collection('group_users').findOne({ groupId });
     await registerMiniGameGroup(database, groupId, sample?.groupName || `Group ${groupId}`, sample?.groupLink || null);
+    // Start the first mini-game immediately after this bot startup. The game
+    // itself schedules the following round one hour after it starts.
+    await database.collection('mini_game_groups').updateOne(
+      { groupId, activeRound: null },
+      { $set: { nextGameAt: startupNow, updatedAt: startupNow } },
+    );
   }
 
   await bot.launch();
