@@ -3,6 +3,7 @@
 This starter project adds a Telegram group bot with:
 
 - a /rankings command that shows the top 10 users for the current group
+- an hourly mini-game that sends a word image into each registered group
 - message counting per user
 - MongoDB-backed persistence so data survives redeploys
 - Rule 5 anti-spam protection for rapid message bursts
@@ -47,6 +48,8 @@ This bot stores rankings in MongoDB. For deploys, use a remote or managed MongoD
 - Rule 5 block notices are shown in the group where the violation happened. Longer manual-ban buttons are sent only to `LOGGER_GROUP_ID`, and `/banuser` and `/unbanuser` work only there for the owner.
 - Only the first Rule 5 block notice is sent. Further ordinary messages are ignored silently until the 20-minute block expires; commands remain disabled.
 - /rankings shows the top 10 users for the current group.
+- Mini-games start automatically when the bot is deployed or added to a group, then run once per hour. Users only need to type the displayed word.
+- Existing ranking, mini-game, moderation, and stats data is never reset, archived, deleted, or rewritten on startup. The bot continues counting from the current values.
 - /profile shows the calling user’s total, daily, weekly, and overall rank.
 - /topuser shows the top 10 global users across all groups the bot has seen.
 - /topgroups shows the top 10 groups by activity.

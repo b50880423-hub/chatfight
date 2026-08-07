@@ -1063,6 +1063,15 @@ bot.on('my_chat_member', async (ctx) => {
       member.chat.username ? `https://t.me/${member.chat.username}` : null,
     );
     await sendWelcomeMessage(ctx, member.chat.id);
+    return;
+  }
+
+  if (member.new_chat_member?.status === 'left' || member.new_chat_member?.status === 'kicked') {
+    const database = await connectDb();
+    await database.collection('mini_game_groups').updateOne(
+      { groupId: member.chat.id.toString() },
+      { $set: { enabled: false, updatedAt: new Date() } },
+    );
   }
 });
 
@@ -1098,61 +1107,36 @@ async function start() {
 
   await ensureIndexes();
 
-  // Recover persisted hourly mini-games after restarts. Existing groups keep
-  // their saved nextGameAt; new groups get their first game one hour later.
   const database = await connectDb();
+
+  // Recover persisted hourly mini-games after restarts. Include groups that
+  // were registered before any ranking row was written, otherwise a newly
+  // added group can be missed forever after a restart.
+  const [rankingGroups, registeredGroups] = await Promise.all([
+    database.collection('group_users').distinct('groupId'),
+    database.collection('mini_game_groups').distinct('groupId'),
+  ]);
+  const knownGroups = [...new Set([...rankingGroups, ...registeredGroups])];
   const startupNow = new Date();
-
-  // Get groups from both existing group data and group stats.
-  const groupIds = new Set();
-
-  const userGroupIds = await database
-    .collection('group_users')
-    .distinct('groupId');
-
-  for (const id of userGroupIds) {
-    if (id !== null && id !== undefined) {
-      groupIds.add(String(id));
-    }
-  }
-
-  const statGroupIds = await database
-    .collection('group_stats')
-    .distinct('groupId');
-
-  for (const id of statGroupIds) {
-    if (id !== null && id !== undefined) {
-      groupIds.add(String(id));
-    }
-  }
-
-  console.log(`[MiniGame] Found ${groupIds.size} group(s) for startup`);
-
-  for (const groupId of groupIds) {
-    const sample =
-      await database.collection('group_users').findOne({ groupId }) ||
-      await database.collection('group_stats').findOne({ groupId });
-
-    await registerMiniGameGroup(
-      database,
-      groupId,
-      sample?.groupName || `Group ${groupId}`,
-      sample?.groupLink || null
-    );
-
-    // Force the first game to be due immediately.
+  for (const groupId of knownGroups) {
+    const [sample, registered] = await Promise.all([
+      database.collection('group_users').findOne({ groupId }),
+      database.collection('mini_game_groups').findOne({ groupId }),
+    ]);
+    await registerMiniGameGroup(database, groupId, sample?.groupName || `Group ${groupId}`, sample?.groupLink || null);
+    // Start one round in every known group after deployment/restart. Once the
+    // round is sent, the game module schedules the next round one hour later.
     await database.collection('mini_game_groups').updateOne(
       { groupId, activeRound: null },
-      {
-        $set: {
-          nextGameAt: startupNow,
-          updatedAt: startupNow
-        }
-      }
+      { $set: { nextGameAt: startupNow, updatedAt: startupNow } },
     );
+    if (registered?.enabled === false) {
+      await database.collection('mini_game_groups').updateOne(
+        { groupId },
+        { $set: { enabled: false, updatedAt: startupNow } },
+      );
+    }
   }
-
-  console.log('[MiniGame] Startup scheduling completed');
 
   await bot.launch();
   console.log('Bot started');

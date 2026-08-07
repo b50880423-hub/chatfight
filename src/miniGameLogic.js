@@ -3,6 +3,7 @@ import sharp from 'sharp';
 
 const GAME_INTERVAL_MS = 60 * 60 * 1000;
 const GAME_DURATION_MS = 10 * 60 * 1000;
+const SEND_RETRY_MS = 60 * 1000;
 
 const WORDS = [
   'RECEPTION','ADVENTURE','BEAUTIFUL','CHALLENGE','COMPUTER','DREAMER','ELEPHANT','FREEDOM',
@@ -76,7 +77,9 @@ export async function registerMiniGameGroup(db, groupId, groupName, groupLink = 
   await games.updateOne(
     { groupId },
     {
-      $set: { groupName, groupLink, updatedAt: now },
+      $set: { groupName, groupLink, enabled: true, updatedAt: now },
+      // A group should see its first game as soon as it is registered. The
+      // hourly delay is only used after a round has started or expired.
       $setOnInsert: { groupId, nextGameAt: now, activeRound: null, createdAt: now },
     },
     { upsert: true },
@@ -93,7 +96,11 @@ function chooseWord(previousWord = '') {
 export async function startDueMiniGames({ db, telegram, logger = console }) {
   const games = db.collection('mini_game_groups');
   const now = new Date();
-  const due = await games.find({ nextGameAt: { $lte: now }, activeRound: null }).limit(50).toArray();
+  const due = await games
+    .find({ enabled: { $ne: false }, nextGameAt: { $lte: now }, activeRound: null })
+    .sort({ nextGameAt: 1 })
+    .limit(50)
+    .toArray();
 
   for (const game of due) {
     const word = chooseWord(game.lastWord || '');
@@ -107,17 +114,25 @@ export async function startDueMiniGames({ db, telegram, logger = console }) {
     const round = claimed.activeRound;
     try {
       const image = await renderGameImage(round.word);
-      const caption = '⚡ Be the first to write the word shown in the photo to climb the mini-game leaderboard.\n\n⏱️ <b>Time limit: 10 minutes</b>';
+      const caption = '⚡ Be the first to write the word shown in the photo to climb the mini-game leaderboard.\n\n⏱️ <b>Time remaining: 10 minutes</b>';
       await telegram.sendPhoto(claimed.groupId, Input.fromBuffer(image, 'chatfight-game.png'), {
         caption,
         parse_mode: 'HTML',
         has_spoiler: true,
       });
     } catch (error) {
-      logger.error?.(`Mini-game send failed for ${claimed.groupId}:`, error);
+      const description = error?.response?.description || error?.message || error;
+      logger.error?.(`Mini-game send failed for ${claimed.groupId}; retrying in 60 seconds:`, description);
       await games.updateOne(
         { _id: claimed._id },
-        { $set: { activeRound: null, nextGameAt: nextHourFrom(now), updatedAt: new Date() } },
+        {
+          $set: {
+            activeRound: null,
+            nextGameAt: new Date(Date.now() + SEND_RETRY_MS),
+            lastSendError: String(description),
+            updatedAt: new Date(),
+          },
+        },
       );
     }
   }
