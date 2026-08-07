@@ -44,6 +44,7 @@ This bot stores rankings in MongoDB. For deploys, use a remote or managed MongoD
 - Every non-command message from a real Telegram user in a group increments that user's count. Messages sent by Telegram bots are ignored.
 - After 5 consecutive messages with less than 3 seconds between each message, the user is blocked from this bot for 20 minutes in that group. The group itself is not muted.
 - While blocked, the user's messages do not increase rankings and all bot commands are disabled. The block expires automatically after 20 minutes, including after a restart.
+- Rule 5 block notices are shown in the group where the violation happened. Longer manual-ban buttons are sent only to `LOGGER_GROUP_ID`, and `/banuser` and `/unbanuser` work only there for the owner.
 - /rankings shows the top 10 users for the current group.
 - /profile shows the calling user’s total, daily, weekly, and overall rank.
 - /topuser shows the top 10 global users across all groups the bot has seen.

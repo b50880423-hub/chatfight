@@ -359,13 +359,24 @@ async function checkSpamAndCount(ctx) {
     );
 
     const blockText = [
-      `<b>ChatFight - User blocked</b>`,
+      `<b>ChatFight - User blocked in this group</b>`,
       '',
       `${escapeHtml(displayName)} has been blocked from the bot for <b>20 minutes</b> after sending ${RULE_5_MESSAGE_LIMIT} messages with less than 3 seconds between each message.`,
-      'Blocked users do not earn ranking points and cannot use bot commands until the block expires.',
+      'Blocked users do not earn ranking points and cannot use bot commands until the block expires. The group itself is not muted.',
     ].join('\n');
 
-    await ctx.reply(blockText, { reply_markup: buildBanKeyboard(userId), parse_mode: 'HTML' });
+    await ctx.reply(blockText, { parse_mode: 'HTML' });
+    await sendLoggerModerationMessage([
+      '<b>ChatFight - Rule 5 moderation</b>',
+      '',
+      `User: ${escapeHtml(displayName)}`,
+      `User ID: <code>${escapeHtml(userId)}</code>`,
+      `Group: ${escapeHtml(groupName)}`,
+      `Group ID: <code>${escapeHtml(groupId)}</code>`,
+      'Reason: Rule 5 rapid messages',
+      '',
+      'The user was automatically blocked from the bot for 20 minutes. Choose a longer ban only if needed.',
+    ].join('\n'), buildBanKeyboard(userId));
     await sendUserNotification(userId, buildBlockMessage(displayName, blockedUntil));
     return;
   }
@@ -590,6 +601,18 @@ async function sendLoggerMessage(message) {
   }
 }
 
+async function sendLoggerModerationMessage(message, replyMarkup) {
+  if (!loggerChatId) return;
+  try {
+    await bot.telegram.sendMessage(loggerChatId, message, {
+      parse_mode: 'HTML',
+      reply_markup: replyMarkup,
+    });
+  } catch (error) {
+    console.error('Failed to send logger moderation message', error.message || error);
+  }
+}
+
 async function sendWelcomeMessage(ctx, targetChatId = null) {
   const keyboardButtons = [
     [{ text: '📊 Rankings', callback_data: 'welcome:rankings' }, { text: '👤 Profile', callback_data: 'welcome:profile' }],
@@ -788,6 +811,11 @@ bot.command('profile', async (ctx) => {
 });
 
 bot.command('banuser', async (ctx) => {
+  if (ctx.chat?.id?.toString() !== loggerChatId) {
+    await ctx.reply('Manual ban controls are available only in the logger group.');
+    return;
+  }
+
   if (!isOwner(ctx.from?.id)) {
     await ctx.reply('Only the owner can ban users.');
     return;
@@ -812,13 +840,18 @@ bot.command('banuser', async (ctx) => {
     targetId = found.userId;
   }
 
-  await ctx.reply(`Ban user <b>${escapeHtml(targetId)}</b>\nReason: ${escapeHtml(reason)}\nChoose a duration:`, {
-    parse_mode: 'HTML',
-    reply_markup: buildBanKeyboard(targetId),
-  });
+  await sendLoggerModerationMessage(
+    `Ban user <b>${escapeHtml(targetId)}</b>\nReason: ${escapeHtml(reason)}\nChoose a duration:`,
+    buildBanKeyboard(targetId),
+  );
 });
 
 bot.command('unbanuser', async (ctx) => {
+  if (ctx.chat?.id?.toString() !== loggerChatId) {
+    await ctx.reply('Manual unban controls are available only in the logger group.');
+    return;
+  }
+
   if (!isOwner(ctx.from?.id)) {
     await ctx.reply('Only the owner can unban users.');
     return;
@@ -837,6 +870,11 @@ bot.command('unbanuser', async (ctx) => {
 
 bot.action(/banuser:(\d+):(1d|2d|3d|10d|20d|1m|3m|1y|perm|ignore)/, async (ctx) => {
   await ctx.answerCbQuery();
+  if (ctx.chat?.id?.toString() !== loggerChatId) {
+    await ctx.reply('Ban controls are available only in the logger group.');
+    return;
+  }
+
   if (!isOwner(ctx.from?.id)) {
     await ctx.reply('Only the owner can confirm bans.');
     return;
