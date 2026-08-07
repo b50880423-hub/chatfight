@@ -21,10 +21,12 @@ export function formatGlobalUsersText(entries, mode = 'today', contextName = 'th
     return `<b>${index + 1}.</b> <b>${name}</b> — ${entry.value}`;
   });
 
+  const modeLabel = mode === 'total' ? 'Total' : mode === 'weekly' ? 'Weekly' : 'Today';
+
   return [
     '<b>ChatFight - Top Users</b>',
     `<b>Group:</b> ${escapeHtml(contextName)}`,
-    '<b>Mode:</b> Total | Today | Weekly',
+    `<b>Mode:</b> ${modeLabel}`,
     '',
     `<b>${title}</b>`,
     ...lines,
@@ -41,10 +43,12 @@ export function formatGlobalGroupsText(entries, mode = 'today', contextName = 't
     return `<b>${index + 1}.</b> <b>${name}</b> — ${entry.value}`;
   });
 
+  const modeLabel = mode === 'total' ? 'Total' : mode === 'weekly' ? 'Weekly' : 'Today';
+
   return [
     '<b>ChatFight - Top Groups</b>',
     `<b>Group:</b> ${escapeHtml(contextName)}`,
-    '<b>Mode:</b> Total | Today | Weekly',
+    `<b>Mode:</b> ${modeLabel}`,
     '',
     `<b>${title}</b>`,
     ...lines,

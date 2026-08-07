@@ -4,6 +4,13 @@ import { MongoClient } from 'mongodb';
 import { formatRankingText, getUserUpdateForMessage, getWeekKey } from './rankingLogic.js';
 import { formatProfileText } from './profileLogic.js';
 import { formatGlobalUsersText, formatGlobalGroupsText } from './globalLogic.js';
+
+function normalizeDisplayName(value = '') {
+  const raw = String(value).trim();
+  if (!raw) return raw;
+  const stripped = raw.startsWith('@') ? raw.slice(1) : raw;
+  return stripped.replace(/_/g, ' ');
+}
 import { buildLoggerMessage, getLoggerChatId } from './logger.js';
 import { createHealthServer } from './health.js';
 
@@ -404,9 +411,9 @@ bot.on('message', async (ctx) => {
 
   const groupId = ctx.chat.id.toString();
   const userId = message.from?.id?.toString();
-  const userName = [message.from?.first_name, message.from?.last_name]
-    .filter(Boolean)
-    .join(' ') || message.from?.username || 'Unknown';
+  const userName = normalizeDisplayName(
+    [message.from?.first_name, message.from?.last_name].filter(Boolean).join(' ') || message.from?.username || 'Unknown',
+  );
 
   if (!userId) return;
 

@@ -30,10 +30,12 @@ export function formatRankingText(topUsers, totalValue, mode = 'today', contextN
     return `<b>${index + 1}.</b> <b>${name}</b> — ${user[metricKey] ?? 0}`;
   });
 
+  const modeLabel = mode === 'total' ? 'Total' : mode === 'weekly' ? 'Weekly' : 'Today';
+
   return [
     '<b>ChatFight - Rankings</b>',
     `<b>Group:</b> ${escapeHtml(contextName)}`,
-    '<b>Mode:</b> Total | Today | Weekly',
+    `<b>Mode:</b> ${modeLabel}`,
     '',
     `<b>${title}</b>`,
     ...lines,
