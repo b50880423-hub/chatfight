@@ -25,13 +25,34 @@ function buildUserLink(user) {
   return href ? `<a href="${escapeHtml(href)}">${name}</a>` : name;
 }
 
-export function getWeekKey(date) {
-  const copy = new Date(date);
-  const day = copy.getUTCDay() || 7;
-  copy.setUTCDate(copy.getUTCDate() + (1 - day));
-  return `${copy.getUTCFullYear()}-${String(copy.getUTCMonth() + 1).padStart(2, '0')}-${String(copy.getUTCDate()).padStart(2, '0')}`;
+export function getISTDayKey(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+
+  const values = Object.fromEntries(
+    parts
+      .filter(({ type }) => type !== 'literal')
+      .map(({ type, value }) => [type, value])
+  );
+
+  return `${values.year}-${values.month}-${values.day}`;
 }
 
+export function getWeekKey(date = new Date()) {
+  const dayKey = getISTDayKey(date);
+
+  // Use the IST calendar date as the basis for Monday-Sunday week.
+  const copy = new Date(`${dayKey}T00:00:00Z`);
+  const day = copy.getUTCDay() || 7;
+
+  copy.setUTCDate(copy.getUTCDate() + (1 - day));
+
+  return `${copy.getUTCFullYear()}-${String(copy.getUTCMonth() + 1).padStart(2, '0')}-${String(copy.getUTCDate()).padStart(2, '0')}`;
+}
 export function formatRankingText(topUsers, totalValue, mode = 'today', contextName = 'this chat') {
   const metricKey = mode === 'total' ? 'messageCount' : mode === 'weekly' ? 'weeklyMessageCount' : 'dailyMessageCount';
   const title = mode === 'total' ? 'Top users overall:' : mode === 'weekly' ? 'Top users this week:' : 'Top users today:';
@@ -57,7 +78,7 @@ export function formatRankingText(topUsers, totalValue, mode = 'today', contextN
 }
 
 export function getUserUpdateForMessage(existingUser, groupId, userId, displayName, userName, groupName, groupLink, now = new Date()) {
-  const dayKey = now.toISOString().slice(0, 10);
+  const dayKey = getISTDayKey(now);
   const weekKey = getWeekKey(now);
 
   if (!existingUser) {
