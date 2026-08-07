@@ -1,0 +1,16 @@
+{
+  "name": "chatfight",
+  "version": "1.0.0",
+  "description": "Telegram group activity bot with rankings",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.1",
+    "mongodb": "^6.0.0",
+    "telegraf": "^4.0.0"
+  }
+}
