@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { Telegraf } from 'telegraf';
+import { Telegraf, Input } from 'telegraf';
 import { MongoClient } from 'mongodb';
 import {
   formatRankingText,
@@ -37,6 +37,16 @@ function normalizeUsername(value = '') {
 }
 import { buildLoggerMessage, getLoggerChatId } from './logger.js';
 import { createHealthServer } from './health.js';
+import {
+  ensureMiniGameIndexes,
+  registerMiniGameGroup,
+  startDueMiniGames,
+  expireMiniGames,
+  handleMiniGameAnswer,
+  getMiniGameLeaderboard,
+  formatMiniGameLeaderboard,
+  miniGameLeaderboardKeyboard,
+} from './miniGameLogic.js';
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const mongoUri = process.env.MONGODB_URI || (process.env.NODE_ENV === 'development' ? 'mongodb://127.0.0.1:27017' : null);
@@ -80,6 +90,7 @@ async function ensureIndexes() {
 
   const groupStats = database.collection('group_stats');
   await groupStats.createIndex({ groupId: 1 }, { unique: true });
+  await ensureMiniGameIndexes(database);
 }
 
 const BAN_OPTIONS = {
@@ -119,6 +130,7 @@ function formatRemainingTime(date) {
 
 async function getUserStatus(userId, groupId = null) {
   const database = await connectDb();
+  await registerMiniGameGroup(database, groupId, groupName, groupLink);
   const statuses = database.collection('user_status');
   const now = new Date();
 
@@ -781,6 +793,20 @@ async function sendRankingReply(ctx, mode = 'today') {
   await sendOrEditMessage(ctx, message, { reply_markup: buildRankingKeyboard() });
 }
 
+bot.command('leaderboard', async (ctx) => {
+  const groupId = ctx.chat?.type === 'private' ? null : ctx.chat?.id?.toString();
+  if (!groupId) {
+    await ctx.reply('Use /leaderboard in a group.');
+    return;
+  }
+  if (await maybeRejectUser(ctx, groupId)) return;
+  const database = await connectDb();
+  const entries = await getMiniGameLeaderboard(database, groupId);
+  await sendOrEditMessage(ctx, formatMiniGameLeaderboard(entries, 'chat'), {
+    reply_markup: miniGameLeaderboardKeyboard(),
+  });
+});
+
 bot.command(['rankings', 'ranking'], async (ctx) => {
   if (await maybeRejectUser(ctx, ctx.chat?.type === 'private' ? null : ctx.chat.id.toString())) return;
   await sendRankingReply(ctx, 'today');
@@ -978,6 +1004,19 @@ bot.action('welcome:profile', async (ctx) => {
   await sendOrEditMessage(ctx, message);
 });
 
+bot.action(/minigame_lb:(chat|global)/, async (ctx) => {
+  await ctx.answerCbQuery();
+  const groupId = ctx.chat?.type === 'private' ? null : ctx.chat?.id?.toString();
+  if (!groupId) return;
+  if (await maybeRejectUser(ctx, groupId)) return;
+  const scope = ctx.match[1];
+  const database = await connectDb();
+  const entries = await getMiniGameLeaderboard(database, scope === 'chat' ? groupId : null);
+  await sendOrEditMessage(ctx, formatMiniGameLeaderboard(entries, scope), {
+    reply_markup: miniGameLeaderboardKeyboard(),
+  });
+});
+
 bot.action(/rankings:(today|total|weekly)/, async (ctx) => {
   await ctx.answerCbQuery();
   if (await maybeRejectUser(ctx, ctx.chat.id.toString())) return;
@@ -1017,6 +1056,13 @@ bot.on('my_chat_member', async (ctx) => {
     };
     const message = buildLoggerMessage('group-added', payload);
     await sendLoggerMessage(message);
+    const database = await connectDb();
+    await registerMiniGameGroup(
+      database,
+      member.chat.id.toString(),
+      member.chat.title || member.chat.username || `Group ${member.chat.id}`,
+      member.chat.username ? `https://t.me/${member.chat.username}` : null,
+    );
     await sendWelcomeMessage(ctx, member.chat.id);
   }
 });
@@ -1032,6 +1078,15 @@ bot.on('message', async (ctx) => {
   // ignored silently until the block expires.
   if (await maybeRejectUser(ctx, groupId, false)) return;
 
+  const database = await connectDb();
+  await registerMiniGameGroup(
+    database,
+    groupId,
+    ctx.chat.title || ctx.chat.username || `Group ${groupId}`,
+    ctx.chat.username ? `https://t.me/${ctx.chat.username}` : null,
+  );
+
+  await handleMiniGameAnswer({ db: database, ctx });
   await checkSpamAndCount(ctx);
 });
 
@@ -1043,8 +1098,29 @@ async function start() {
   });
 
   await ensureIndexes();
+
+  // Recover persisted hourly mini-games after restarts. Existing groups keep
+  // their saved nextGameAt; new groups get their first game one hour later.
+  const database = await connectDb();
+  const knownGroups = await database.collection('group_users').distinct('groupId');
+  for (const groupId of knownGroups) {
+    const sample = await database.collection('group_users').findOne({ groupId });
+    await registerMiniGameGroup(database, groupId, sample?.groupName || `Group ${groupId}`, sample?.groupLink || null);
+  }
+
   await bot.launch();
   console.log('Bot started');
+
+  const runMiniGames = async () => {
+    try {
+      await expireMiniGames(database);
+      await startDueMiniGames({ db: database, telegram: bot.telegram, logger: console });
+    } catch (error) {
+      console.error('Mini-game scheduler error:', error);
+    }
+  };
+  await runMiniGames();
+  setInterval(runMiniGames, 15000);
 }
 
 start().catch((error) => {
