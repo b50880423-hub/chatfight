@@ -665,10 +665,33 @@ function buildRankingKeyboard(prefix = 'rankings') {
 
 async function sendOrEditMessage(ctx, text, options = {}) {
   if (ctx.callbackQuery?.message) {
-    return ctx.editMessageText(text, { parse_mode: 'HTML', ...options });
+    try {
+      return await ctx.editMessageText(text, {
+        parse_mode: 'HTML',
+        ...options,
+      });
+    } catch (error) {
+      // Telegram returns this when the message is already identical.
+      if (
+        error?.response?.error_code === 400 &&
+        error?.response?.description?.includes('message is not modified')
+      ) {
+        // Just answer the callback instead of treating it as a bot error.
+        try {
+          await ctx.answerCbQuery();
+        } catch (_) {}
+
+        return null;
+      }
+
+      throw error;
+    }
   }
 
-  return ctx.reply(text, { parse_mode: 'HTML', ...options });
+  return ctx.reply(text, {
+    parse_mode: 'HTML',
+    ...options,
+  });
 }
 
 async function maybeRejectUser(ctx, groupId = null, notify = true) {
