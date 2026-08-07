@@ -10,6 +10,7 @@ const token = process.env.TELEGRAM_BOT_TOKEN;
 const mongoUri = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017';
 const dbName = process.env.MONGODB_DB_NAME || 'chatfight';
 const loggerChatId = getLoggerChatId(process.env);
+const publicGroupLink = process.env.PUBLIC_GROUP_LINK || '';
 
 if (!token) {
   console.error('TELEGRAM_BOT_TOKEN is required');
@@ -196,11 +197,16 @@ async function sendLoggerMessage(message) {
 }
 
 async function sendWelcomeMessage(ctx, targetChatId = null) {
+  const keyboardButtons = [
+    [{ text: '📊 Rankings', callback_data: 'welcome:rankings' }, { text: '👤 Profile', callback_data: 'welcome:profile' }],
+  ];
+
+  if (publicGroupLink) {
+    keyboardButtons.push([{ text: '🚀 Join Public Group', url: publicGroupLink }]);
+  }
+
   const keyboard = {
-    inline_keyboard: [[
-      { text: '📊 Rankings', callback_data: 'welcome:rankings' },
-      { text: '👤 Profile', callback_data: 'welcome:profile' },
-    ]],
+    inline_keyboard: keyboardButtons,
   };
 
   const message = 'Welcome to ChatFight! Use the buttons below to explore the bot.';
