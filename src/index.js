@@ -404,7 +404,9 @@ bot.on('message', async (ctx) => {
 
   const groupId = ctx.chat.id.toString();
   const userId = message.from?.id?.toString();
-  const userName = message.from?.username || message.from?.first_name || 'Unknown';
+  const userName = [message.from?.first_name, message.from?.last_name]
+    .filter(Boolean)
+    .join(' ') || message.from?.username || 'Unknown';
 
   if (!userId) return;
 
