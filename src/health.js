@@ -9,7 +9,7 @@ export function buildHealthPayload() {
 
 export function createHealthServer(port = process.env.HEALTH_PORT || 3001) {
   return http.createServer((req, res) => {
-    if (req.url === '/healthz') {
+    if (req.method === 'GET' && (req.url === '/healthz' || req.url === '/')) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(buildHealthPayload()));
       return;

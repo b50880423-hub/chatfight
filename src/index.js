@@ -4,6 +4,13 @@ import { MongoClient } from 'mongodb';
 import { formatRankingText, getUserUpdateForMessage, getWeekKey } from './rankingLogic.js';
 import { formatProfileText } from './profileLogic.js';
 import { formatGlobalUsersText, formatGlobalGroupsText, formatMyTopGroupsText } from './globalLogic.js';
+import {
+  RULE_5_MESSAGE_GAP_MS,
+  RULE_5_MESSAGE_LIMIT,
+  getNextSpamCount,
+  getRule5BlockUntil,
+  isCountableHumanMessage,
+} from './antiSpamLogic.js';
 
 function escapeHtml(value = '') {
   return String(value)
@@ -109,7 +116,26 @@ function formatRemainingTime(date) {
 async function getUserStatus(userId, groupId = null) {
   const database = await connectDb();
   const statuses = database.collection('user_status');
+  const now = new Date();
+
   if (groupId) {
+    // Expired rule-5 blocks are removed on the first request after the timer
+    // ends. This survives bot restarts and makes the unblock persistent.
+    await statuses.updateOne(
+      { userId, groupId, blockedUntil: { $exists: true, $lte: now } },
+      {
+        $unset: { blockedUntil: '', spamCount: '', lastMessageAt: '' },
+        $set: { updatedAt: now },
+      },
+    );
+    await statuses.updateOne(
+      { userId, groupId: 'global', blockedUntil: { $exists: true, $lte: now } },
+      {
+        $unset: { blockedUntil: '', spamCount: '', lastMessageAt: '' },
+        $set: { updatedAt: now },
+      },
+    );
+
     const [groupStatus, globalStatus] = await Promise.all([
       statuses.findOne({ userId, groupId }),
       statuses.findOne({ userId, groupId: 'global' }),
@@ -254,7 +280,7 @@ async function recordGroupMilestone(groupId, ctx) {
     { upsert: true, returnDocument: 'after' },
   );
 
-  const total = result.value?.totalMessageCount || 0;
+  const total = result?.totalMessageCount || 0;
   if (MILESTONES.includes(total)) {
     const groupName = ctx.chat?.title || ctx.chat?.username || 'this group';
     await ctx.reply(`🎉 ${groupName} has crossed ${total} total bot-tracked messages! Keep the fight going!`);
@@ -263,6 +289,8 @@ async function recordGroupMilestone(groupId, ctx) {
 
 async function checkSpamAndCount(ctx) {
   const message = ctx.message;
+  if (!isCountableHumanMessage(message)) return;
+
   const groupId = ctx.chat.id.toString();
   const userId = message.from?.id?.toString();
   const rawName = [message.from?.first_name, message.from?.last_name].filter(Boolean).join(' ');
@@ -273,24 +301,35 @@ async function checkSpamAndCount(ctx) {
   const groupLink = ctx.chat?.username ? `https://t.me/${ctx.chat.username}` : null;
 
   const { groupStatus } = await getUserStatus(userId, groupId);
+  if (isActiveDate(groupStatus?.blockedUntil)) return;
+
   const database = await connectDb();
   const statuses = database.collection('user_status');
   const now = new Date();
-  const threshold = new Date(now.valueOf() - 3000);
+  const threshold = new Date(now.valueOf() - RULE_5_MESSAGE_GAP_MS);
 
-  // Atomically update lastMessageAt and spamCount based on previous lastMessageAt
+  // Atomically update lastMessageAt and spamCount based on the previous
+  // message. The active-block filter prevents a concurrent message from
+  // earning points after another message has triggered the block.
+  const activeBlockExpression = { $gt: ['$blockedUntil', now] };
   const updatePipeline = [
     {
       $set: {
-        lastMessageAt: now,
+        lastMessageAt: { $cond: [activeBlockExpression, '$lastMessageAt', now] },
         spamCount: {
           $cond: [
-            { $gt: ['$lastMessageAt', threshold] },
-            { $add: ['$spamCount', 1] },
-            1,
+            activeBlockExpression,
+            { $ifNull: ['$spamCount', 0] },
+            {
+              $cond: [
+                { $gt: ['$lastMessageAt', threshold] },
+                { $add: [{ $ifNull: ['$spamCount', 0] }, 1] },
+                1,
+              ],
+            },
           ],
         },
-        updatedAt: now,
+        updatedAt: { $cond: [activeBlockExpression, '$updatedAt', now] },
         createdAt: { $ifNull: ['$createdAt', now] },
         userId: userId,
         groupId: groupId,
@@ -304,23 +343,25 @@ async function checkSpamAndCount(ctx) {
     { upsert: true, returnDocument: 'after' },
   );
 
-  const newStatus = res.value || {};
+  const newStatus = res || {};
+  if (isActiveDate(newStatus.blockedUntil)) return;
+
   const spamCount = newStatus.spamCount || 0;
 
-  if (spamCount >= 5) {
-    const blockedUntil = new Date(now.valueOf() + 20 * 60 * 1000);
-    const blockCount = (newStatus.blockCount || 0) + 1;
-    const violationCount = (newStatus.violationCount || 0) + 1;
+  if (spamCount >= RULE_5_MESSAGE_LIMIT) {
+    const blockedUntil = getRule5BlockUntil(now);
+    const globalBlock = await applyRule5Block(userId, blockedUntil);
+    if (!globalBlock) return;
 
     await statuses.updateOne(
       { userId, groupId },
-      { $set: { blockedUntil, spamCount: 0, lastMessageAt: now, blockCount, violationCount, updatedAt: new Date() } },
+      { $set: { spamCount: 0, lastMessageAt: now, updatedAt: new Date() } },
     );
 
     const blockText = [
       `<b>ChatFight - User blocked</b>`,
       '',
-      `${escapeHtml(displayName)} has been blocked from the bot for <b>20 minutes</b> after sending 5 messages in under 3 seconds each.`,
+      `${escapeHtml(displayName)} has been blocked from the bot for <b>20 minutes</b> after sending ${RULE_5_MESSAGE_LIMIT} messages with less than 3 seconds between each message.`,
       'Blocked users do not earn ranking points and cannot use bot commands until the block expires.',
     ].join('\n');
 
@@ -331,6 +372,43 @@ async function checkSpamAndCount(ctx) {
 
   await getOrCreateUser(groupId, userId, displayName, userName, groupName, groupLink);
   await recordGroupMilestone(groupId, ctx);
+}
+
+async function applyRule5Block(userId, blockedUntil) {
+  const database = await connectDb();
+  const statuses = database.collection('user_status');
+  const now = new Date();
+
+  try {
+    const result = await statuses.findOneAndUpdate(
+      {
+        userId,
+        groupId: 'global',
+        $or: [
+          { blockedUntil: { $exists: false } },
+          { blockedUntil: { $lte: now } },
+        ],
+      },
+      {
+        $set: {
+          blockedUntil,
+          blockReason: 'rule-5-rapid-messages',
+          updatedAt: now,
+        },
+        $inc: { blockCount: 1, violationCount: 1 },
+        $setOnInsert: { createdAt: now },
+      },
+      { upsert: true, returnDocument: 'after' },
+    );
+
+    return result;
+  } catch (error) {
+    // Two groups can trigger Rule 5 for the same user at the same time. If
+    // another request created the unique global status first, the user is
+    // already blocked and this request must not send a second notification.
+    if (error?.code === 11000) return null;
+    throw error;
+  }
 }
 
 async function getOrCreateUser(groupId, userId, displayName, userName, groupName, groupLink) {
@@ -588,10 +666,16 @@ async function maybeRejectUser(ctx, groupId = null) {
 
   const now = new Date();
   const isGloballyBanned = globalStatus?.banUntil && new Date(globalStatus.banUntil) > now;
+  const isGloballyBlocked = globalStatus?.blockedUntil && new Date(globalStatus.blockedUntil) > now;
   const isGroupBlocked = groupStatus?.blockedUntil && new Date(groupStatus.blockedUntil) > now;
 
   if (isGloballyBanned) {
     await ctx.reply(buildBanMessage(ctx.from?.first_name || ctx.from?.username || 'You', globalStatus.banUntil, globalStatus.banReason), { parse_mode: 'HTML' });
+    return true;
+  }
+
+  if (isGloballyBlocked) {
+    await ctx.reply(buildBlockMessage(ctx.from?.first_name || ctx.from?.username || 'You', globalStatus.blockedUntil), { parse_mode: 'HTML' });
     return true;
   }
 
@@ -773,11 +857,13 @@ bot.action(/banuser:(\d+):(1d|2d|3d|10d|20d|1m|3m|1y|perm|ignore)/, async (ctx) 
 
 bot.action('welcome:rankings', async (ctx) => {
   await ctx.answerCbQuery();
+  if (await maybeRejectUser(ctx, ctx.chat?.type === 'private' ? null : ctx.chat?.id?.toString())) return;
   await sendRankingReply(ctx, 'today');
 });
 
 bot.action('welcome:profile', async (ctx) => {
   await ctx.answerCbQuery();
+  if (await maybeRejectUser(ctx, ctx.chat?.type === 'private' ? null : ctx.chat?.id?.toString())) return;
   const groupId = ctx.chat.id.toString();
   const userId = ctx.from?.id?.toString();
 

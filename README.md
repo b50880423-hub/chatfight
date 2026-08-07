@@ -5,6 +5,8 @@ This starter project adds a Telegram group bot with:
 - a /rankings command that shows the top 10 users for the current group
 - message counting per user
 - MongoDB-backed persistence so data survives redeploys
+- Rule 5 anti-spam protection for rapid message bursts
+- A `/healthz` endpoint for Render and uptime monitors
 
 ## Requirements
 
@@ -39,7 +41,9 @@ This bot stores rankings in MongoDB. For deploys, use a remote or managed MongoD
 
 ## Current behavior
 
-- Every non-command message in a group increments that user's count.
+- Every non-command message from a real Telegram user in a group increments that user's count. Messages sent by Telegram bots are ignored.
+- After 5 consecutive messages with less than 3 seconds between each message, the user is blocked from this bot for 20 minutes in that group. The group itself is not muted.
+- While blocked, the user's messages do not increase rankings and all bot commands are disabled. The block expires automatically after 20 minutes, including after a restart.
 - /rankings shows the top 10 users for the current group.
 - /profile shows the calling user’s total, daily, weekly, and overall rank.
 - /topuser shows the top 10 global users across all groups the bot has seen.
@@ -48,6 +52,4 @@ This bot stores rankings in MongoDB. For deploys, use a remote or managed MongoD
 
 ## Next steps
 
-- add more commands such as /stats, /me, and /leaderboard
-- add richer analytics like weekly/monthly rankings
-- add admin-only features and anti-spam protections
+- After deploying on Render, use `https://<your-render-domain>/healthz` as the URL for your external auto-pinger. The root URL also returns the same healthy response.
