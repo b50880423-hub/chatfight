@@ -77,7 +77,7 @@ async function ensureIndexes() {
   await groupStats.createIndex({ groupId: 1 }, { unique: true });
 }
 
-const MILESTONES = [500, 1000, 2000, 3000, 4000];
+const MILESTONES = [500, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 11000, 12000, 13000, 14000, 15000, 20000, 25000, 30000, 40000, 50000, 60000, 70000, 80000, 90000, 100000];
 const BAN_OPTIONS = {
   '1d': { label: '1 day', days: 1 },
   '2d': { label: '2 days', days: 2 },
