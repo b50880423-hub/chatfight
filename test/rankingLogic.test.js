@@ -41,7 +41,7 @@ test('getUserUpdateForMessage resets daily count for a new day', () => {
     dailyMessageCount: 10,
   };
 
-  const updatePlan = getUserUpdateForMessage(existing, '42', '99', 'Bishal', new Date('2025-01-02T10:00:00.000Z'));
+  const updatePlan = getUserUpdateForMessage(existing, '42', '99', 'Bishal', 'mr_obstinate', new Date('2025-01-02T10:00:00.000Z'));
 
   assert.equal(updatePlan.operation, 'update');
   assert.equal(updatePlan.update.$set.dailyMessageCount, 1);

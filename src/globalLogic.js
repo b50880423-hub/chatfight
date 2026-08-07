@@ -7,17 +7,14 @@ function escapeHtml(value = '') {
 }
 
 function normalizeDisplayName(value = '') {
-  const raw = String(value).trim();
-  if (!raw) return raw;
-  const stripped = raw.startsWith('@') ? raw.slice(1) : raw;
-  return stripped.replace(/_/g, ' ');
+  return String(value || '').trim();
 }
 
 export function formatGlobalUsersText(entries, mode = 'today', contextName = 'this chat') {
   const title = mode === 'total' ? 'Top 10 global users overall:' : mode === 'weekly' ? 'Top 10 global users this week:' : 'Top 10 global users today:';
   const totalLabel = mode === 'total' ? 'All-time total' : mode === 'weekly' ? 'Week total' : 'Today total';
   const lines = entries.map((entry, index) => {
-    const name = escapeHtml(normalizeDisplayName(entry.userName || `User ${entry.userId}`));
+    const name = escapeHtml(normalizeDisplayName(entry.displayName || entry.userName || `User ${entry.userId}`));
     return `<b>${index + 1}.</b> <b>${name}</b> — ${entry.value}`;
   });
 

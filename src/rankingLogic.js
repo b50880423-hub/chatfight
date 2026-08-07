@@ -7,10 +7,7 @@ function escapeHtml(value = '') {
 }
 
 function normalizeDisplayName(value = '') {
-  const raw = String(value).trim();
-  if (!raw) return raw;
-  const stripped = raw.startsWith('@') ? raw.slice(1) : raw;
-  return stripped.replace(/_/g, ' ');
+  return String(value || '').trim();
 }
 
 export function getWeekKey(date) {
@@ -26,7 +23,7 @@ export function formatRankingText(topUsers, totalValue, mode = 'today', contextN
   const totalLabel = mode === 'total' ? 'All-time total' : mode === 'weekly' ? 'Week total' : 'Today total';
 
   const lines = topUsers.map((user, index) => {
-    const name = escapeHtml(normalizeDisplayName(user.userName || `User ${user.userId}`));
+    const name = escapeHtml(normalizeDisplayName(user.displayName || user.userName || `User ${user.userId}`));
     return `<b>${index + 1}.</b> <b>${name}</b> — ${user[metricKey] ?? 0}`;
   });
 
@@ -44,7 +41,7 @@ export function formatRankingText(topUsers, totalValue, mode = 'today', contextN
   ].join('\n');
 }
 
-export function getUserUpdateForMessage(existingUser, groupId, userId, userName, now = new Date()) {
+export function getUserUpdateForMessage(existingUser, groupId, userId, displayName, userName, now = new Date()) {
   const dayKey = now.toISOString().slice(0, 10);
   const weekKey = getWeekKey(now);
 
@@ -54,6 +51,7 @@ export function getUserUpdateForMessage(existingUser, groupId, userId, userName,
       doc: {
         groupId,
         userId,
+        displayName,
         userName,
         messageCount: 1,
         dailyMessageCount: 1,
@@ -78,6 +76,7 @@ export function getUserUpdateForMessage(existingUser, groupId, userId, userName,
     operation: 'update',
     update: {
       $set: {
+        displayName,
         userName,
         dayKey,
         weekKey,

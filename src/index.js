@@ -5,11 +5,23 @@ import { formatRankingText, getUserUpdateForMessage, getWeekKey } from './rankin
 import { formatProfileText } from './profileLogic.js';
 import { formatGlobalUsersText, formatGlobalGroupsText } from './globalLogic.js';
 
+function escapeHtml(value = '') {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 function normalizeDisplayName(value = '') {
-  const raw = String(value).trim();
+  return String(value || '').trim();
+}
+
+function normalizeUsername(value = '') {
+  const raw = String(value || '').trim();
   if (!raw) return raw;
   const stripped = raw.startsWith('@') ? raw.slice(1) : raw;
-  return stripped.replace(/_/g, ' ');
+  return stripped;
 }
 import { buildLoggerMessage, getLoggerChatId } from './logger.js';
 import { createHealthServer } from './health.js';
@@ -49,6 +61,254 @@ async function ensureIndexes() {
   await users.createIndex({ groupId: 1, userId: 1 }, { unique: true });
   await users.createIndex({ groupId: 1, messageCount: -1 });
   await users.createIndex({ groupId: 1, dayKey: 1 });
+
+  const statuses = database.collection('user_status');
+  await statuses.createIndex({ userId: 1, groupId: 1 }, { unique: true });
+  await statuses.createIndex({ userId: 1, banUntil: 1 });
+
+  const groupStats = database.collection('group_stats');
+  await groupStats.createIndex({ groupId: 1 }, { unique: true });
+}
+
+const MILESTONES = [500, 1000, 2000, 3000, 4000];
+const BAN_OPTIONS = {
+  '1d': { label: '1 day', days: 1 },
+  '2d': { label: '2 days', days: 2 },
+  '3d': { label: '3 days', days: 3 },
+  '10d': { label: '10 days', days: 10 },
+  '20d': { label: '20 days', days: 20 },
+  '1m': { label: '1 month', days: 30 },
+  '3m': { label: '3 months', days: 90 },
+  '1y': { label: '1 year', days: 365 },
+  perm: { label: 'Permanent', days: null },
+  ignore: { label: 'Ignore', days: 0 },
+};
+
+function getBanDurationLabel(key) {
+  return BAN_OPTIONS[key]?.label || 'custom';
+}
+
+function getBanUntil(key) {
+  const option = BAN_OPTIONS[key];
+  if (!option) return null;
+  return option.days === null ? null : new Date(Date.now() + option.days * 24 * 60 * 60 * 1000);
+}
+
+function formatRemainingTime(date) {
+  if (!date) return 'unknown duration';
+  const remainingMs = new Date(date).valueOf() - Date.now();
+  if (remainingMs <= 0) return 'expired';
+  const minutes = Math.floor(remainingMs / 60000);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+  if (days > 0) return `${days} day(s)`;
+  if (hours > 0) return `${hours} hour(s)`;
+  return `${minutes} minute(s)`;
+}
+
+async function getUserStatus(userId, groupId = null) {
+  const database = await connectDb();
+  const statuses = database.collection('user_status');
+  if (groupId) {
+    const [groupStatus, globalStatus] = await Promise.all([
+      statuses.findOne({ userId, groupId }),
+      statuses.findOne({ userId, groupId: 'global' }),
+    ]);
+    return { groupStatus, globalStatus };
+  }
+
+  const globalStatus = await statuses.findOne({ userId, groupId: 'global' });
+  return { groupStatus: null, globalStatus };
+}
+
+async function findAnyActiveGroupBlock(userId) {
+  const database = await connectDb();
+  const statuses = database.collection('user_status');
+  return statuses.findOne({
+    userId,
+    groupId: { $ne: 'global' },
+    blockedUntil: { $gt: new Date() },
+  });
+}
+
+async function updateUserStatus(userId, groupId, update) {
+  const database = await connectDb();
+  const statuses = database.collection('user_status');
+  const now = new Date();
+  await statuses.updateOne(
+    { userId, groupId },
+    {
+      $set: { ...update, updatedAt: now },
+      $setOnInsert: { createdAt: now, userId, groupId },
+    },
+    { upsert: true },
+  );
+  return statuses.findOne({ userId, groupId });
+}
+
+function isActiveDate(value) {
+  return value && new Date(value) > new Date();
+}
+
+function buildBlockMessage(displayName, blockedUntil) {
+  return [
+    `<b>ChatFight - Blocked</b>`,
+    '',
+    `You have been blocked from the bot for <b>20 minutes</b> due to repeated fast messages in the group.`,
+    `Your block expires in <b>${formatRemainingTime(blockedUntil)}</b>.`,
+    'During this time, messages will not count toward rankings and bot commands are disabled.',
+  ].join('\n');
+}
+
+function buildBanMessage(displayName, banUntil, banReason) {
+  const untilText = banUntil ? `until <b>${new Date(banUntil).toLocaleString()}</b>` : '<b>permanently</b>';
+  return [
+    `<b>ChatFight - Banned</b>`,
+    '',
+    `You are banned from the bot ${untilText}.`,
+    `Reason: ${escapeHtml(banReason || 'rule violation')}`,
+    'This ban means you cannot use commands or earn ranking points until the ban expires.',
+  ].join('\n');
+}
+
+async function sendUserNotification(userId, text) {
+  try {
+    await bot.telegram.sendMessage(userId, text, { parse_mode: 'HTML' });
+  } catch (error) {
+    console.error('Failed to notify user', userId, error.message || error);
+  }
+}
+
+async function banUser(userId, durationKey, reason) {
+  const banUntil = getBanUntil(durationKey);
+  const durationLabel = getBanDurationLabel(durationKey);
+  const status = await updateUserStatus(userId, 'global', {
+    banUntil,
+    banReason: reason,
+    banLabel: durationLabel,
+  });
+
+  if (!status) return null;
+  if (BAN_OPTIONS[durationKey]?.days === null || BAN_OPTIONS[durationKey]?.days >= 30) {
+    await resetUserRankings(userId);
+  }
+
+  await sendUserNotification(userId, buildBanMessage(status.userId || userId, banUntil, reason));
+
+  if (BAN_OPTIONS[durationKey]?.days === null || BAN_OPTIONS[durationKey]?.days >= 30) {
+    await sendLoggerMessage(`🚫 User banned for ${durationLabel}\nUser ID: ${userId}\nReason: ${reason}`);
+  }
+
+  return status;
+}
+
+async function unbanUser(userId) {
+  const database = await connectDb();
+  const statuses = database.collection('user_status');
+  await statuses.updateOne(
+    { userId, groupId: 'global' },
+    { $unset: { banUntil: '', banReason: '', banLabel: '' }, $currentDate: { updatedAt: true } },
+  );
+}
+
+async function resetUserRankings(userId) {
+  const database = await connectDb();
+  const users = database.collection('group_users');
+  await users.updateMany(
+    { userId },
+    { $set: { messageCount: 0, dailyMessageCount: 0, weeklyMessageCount: 0 } },
+  );
+}
+
+function buildBanKeyboard(userId) {
+  return {
+    inline_keyboard: [
+      [
+        { text: '1 day', callback_data: `banuser:${userId}:1d` },
+        { text: '2 days', callback_data: `banuser:${userId}:2d` },
+        { text: '3 days', callback_data: `banuser:${userId}:3d` },
+      ],
+      [
+        { text: '10 days', callback_data: `banuser:${userId}:10d` },
+        { text: '20 days', callback_data: `banuser:${userId}:20d` },
+        { text: '1 month', callback_data: `banuser:${userId}:1m` },
+      ],
+      [
+        { text: '3 months', callback_data: `banuser:${userId}:3m` },
+        { text: '1 year', callback_data: `banuser:${userId}:1y` },
+        { text: 'Permanent', callback_data: `banuser:${userId}:perm` },
+      ],
+      [
+        { text: 'Ignore', callback_data: `banuser:${userId}:ignore` },
+      ],
+    ],
+  };
+}
+
+async function recordGroupMilestone(groupId, ctx) {
+  const database = await connectDb();
+  const groupStats = database.collection('group_stats');
+  const result = await groupStats.findOneAndUpdate(
+    { groupId },
+    { $inc: { totalMessageCount: 1 }, $setOnInsert: { createdAt: new Date() } },
+    { upsert: true, returnDocument: 'after' },
+  );
+
+  const total = result.value?.totalMessageCount || 0;
+  if (MILESTONES.includes(total)) {
+    const groupName = ctx.chat?.title || ctx.chat?.username || 'this group';
+    await ctx.reply(`🎉 ${groupName} has crossed ${total} total bot-tracked messages! Keep the fight going!`);
+  }
+}
+
+async function checkSpamAndCount(ctx) {
+  const message = ctx.message;
+  const groupId = ctx.chat.id.toString();
+  const userId = message.from?.id?.toString();
+  const rawName = [message.from?.first_name, message.from?.last_name].filter(Boolean).join(' ');
+  const usernameValue = message.from?.username || '';
+  const displayName = normalizeDisplayName(rawName || usernameValue || 'Unknown');
+  const userName = normalizeUsername(usernameValue);
+
+  const { groupStatus } = await getUserStatus(userId, groupId);
+  const now = new Date();
+
+  const lastMessageAt = groupStatus?.lastMessageAt ? new Date(groupStatus.lastMessageAt) : null;
+  const isFast = lastMessageAt && (now - lastMessageAt) <= 3000;
+  const spamCount = isFast ? (groupStatus.spamCount || 0) + 1 : 1;
+
+  if (spamCount >= 10) {
+    const blockedUntil = new Date(now.valueOf() + 20 * 60 * 1000);
+    const blockCount = (groupStatus?.blockCount || 0) + 1;
+    const violationCount = (groupStatus?.violationCount || 0) + 1;
+
+    await updateUserStatus(userId, groupId, {
+      blockedUntil,
+      spamCount: 0,
+      lastMessageAt: now,
+      blockCount,
+      violationCount,
+    });
+
+    const blockText = [
+      `<b>ChatFight - User blocked</b>`,
+      '',
+      `${escapeHtml(displayName)} has been blocked from the bot for <b>20 minutes</b> after sending 10 messages in under 3 seconds each.`,
+      'Blocked users do not earn ranking points and cannot use bot commands until the block expires.',
+    ].join('\n');
+
+    await ctx.reply(blockText, { reply_markup: buildBanKeyboard(userId), parse_mode: 'HTML' });
+    await sendUserNotification(userId, buildBlockMessage(displayName, blockedUntil));
+    return;
+  }
+
+  await updateUserStatus(userId, groupId, {
+    lastMessageAt: now,
+    spamCount,
+  });
+
+  await getOrCreateUser(groupId, userId, displayName, userName);
+  await recordGroupMilestone(groupId, ctx);
 }
 
 async function getOrCreateUser(groupId, userId, displayName, userName) {
@@ -245,6 +505,11 @@ bot.start(async (ctx) => {
   };
   const message = buildLoggerMessage('bot-started', payload);
   await sendLoggerMessage(message);
+
+  if (ctx.chat?.type === 'private' && await maybeRejectUser(ctx)) {
+    return;
+  }
+
   await sendWelcomeMessage(ctx);
 });
 
@@ -268,6 +533,39 @@ async function sendOrEditMessage(ctx, text, options = {}) {
   return ctx.reply(text, { parse_mode: 'HTML', ...options });
 }
 
+async function maybeRejectUser(ctx, groupId = null) {
+  const userId = ctx.from?.id?.toString();
+  if (!userId) return false;
+
+  let groupStatus = null;
+  let globalStatus = null;
+
+  if (groupId) {
+    const status = await getUserStatus(userId, groupId);
+    groupStatus = status.groupStatus;
+    globalStatus = status.globalStatus;
+  } else {
+    globalStatus = await getUserStatus(userId).then((status) => status.globalStatus);
+    groupStatus = await findAnyActiveGroupBlock(userId);
+  }
+
+  const now = new Date();
+  const isGloballyBanned = globalStatus?.banUntil && new Date(globalStatus.banUntil) > now;
+  const isGroupBlocked = groupStatus?.blockedUntil && new Date(groupStatus.blockedUntil) > now;
+
+  if (isGloballyBanned) {
+    await ctx.reply(buildBanMessage(ctx.from?.first_name || ctx.from?.username || 'You', globalStatus.banUntil, globalStatus.banReason), { parse_mode: 'HTML' });
+    return true;
+  }
+
+  if (isGroupBlocked) {
+    await ctx.reply(buildBlockMessage(ctx.from?.first_name || ctx.from?.username || 'You', groupStatus.blockedUntil), { parse_mode: 'HTML' });
+    return true;
+  }
+
+  return false;
+}
+
 async function sendRankingReply(ctx, mode = 'today') {
   const groupId = ctx.chat.id.toString();
   const contextName = ctx.chat?.title || ctx.chat?.username || 'this chat';
@@ -283,10 +581,12 @@ async function sendRankingReply(ctx, mode = 'today') {
 }
 
 bot.command(['rankings', 'ranking'], async (ctx) => {
+  if (await maybeRejectUser(ctx, ctx.chat?.type === 'private' ? null : ctx.chat.id.toString())) return;
   await sendRankingReply(ctx, 'today');
 });
 
 bot.command('topuser', async (ctx) => {
+  if (await maybeRejectUser(ctx, ctx.chat.id.toString())) return;
   const entries = await getGlobalUsers('today');
   const contextName = ctx.chat?.title || ctx.chat?.username || 'this chat';
   const message = formatGlobalUsersText(entries, 'today', contextName);
@@ -294,6 +594,7 @@ bot.command('topuser', async (ctx) => {
 });
 
 bot.command('topgroups', async (ctx) => {
+  if (await maybeRejectUser(ctx, ctx.chat.id.toString())) return;
   const entries = await getGlobalGroups('today');
   const contextName = ctx.chat?.title || ctx.chat?.username || 'this chat';
   const message = formatGlobalGroupsText(entries, 'today', contextName);
@@ -324,6 +625,7 @@ bot.command('inspect', async (ctx) => {
 });
 
 bot.command('profile', async (ctx) => {
+  if (await maybeRejectUser(ctx, ctx.chat.id.toString())) return;
   const groupId = ctx.chat.id.toString();
   const userId = ctx.from?.id?.toString();
 
@@ -342,6 +644,74 @@ bot.command('profile', async (ctx) => {
   const contextName = ctx.chat?.title || ctx.chat?.username || 'this chat';
   const message = formatProfileText(profileData.profile, profileData.rank, profileData.totalUsers, contextName);
   await sendOrEditMessage(ctx, message);
+});
+
+bot.command('banuser', async (ctx) => {
+  if (!isOwner(ctx.from?.id)) {
+    await ctx.reply('Only the owner can ban users.');
+    return;
+  }
+
+  const args = ctx.message.text.split(' ').slice(1).filter(Boolean);
+  if (!args.length) {
+    await ctx.reply('Usage: /banuser <user_id|@username> [reason]');
+    return;
+  }
+
+  let targetId = args[0].replace('@', '');
+  const reason = args.slice(1).join(' ') || 'rule violation';
+  if (!/^[0-9]+$/.test(targetId)) {
+    const database = await connectDb();
+    const users = database.collection('group_users');
+    const found = await users.findOne({ userName: targetId });
+    if (!found) {
+      await ctx.reply('Unable to locate that user. Use numeric user ID or known @username.');
+      return;
+    }
+    targetId = found.userId;
+  }
+
+  await ctx.reply(`Ban user <b>${escapeHtml(targetId)}</b>\nReason: ${escapeHtml(reason)}\nChoose a duration:`, {
+    parse_mode: 'HTML',
+    reply_markup: buildBanKeyboard(targetId),
+  });
+});
+
+bot.command('unbanuser', async (ctx) => {
+  if (!isOwner(ctx.from?.id)) {
+    await ctx.reply('Only the owner can unban users.');
+    return;
+  }
+
+  const args = ctx.message.text.split(' ').slice(1).filter(Boolean);
+  if (!args.length || !/^[0-9]+$/.test(args[0])) {
+    await ctx.reply('Usage: /unbanuser <user_id>');
+    return;
+  }
+
+  const targetId = args[0];
+  await unbanUser(targetId);
+  await ctx.reply(`User ${escapeHtml(targetId)} has been unbanned.`);
+});
+
+bot.action(/banuser:(\d+):(1d|2d|3d|10d|20d|1m|3m|1y|perm|ignore)/, async (ctx) => {
+  await ctx.answerCbQuery();
+  if (!isOwner(ctx.from?.id)) {
+    await ctx.reply('Only the owner can confirm bans.');
+    return;
+  }
+
+  const [_, targetId, durationKey] = ctx.match;
+  const reasonLine = ctx.callbackQuery.message?.text?.split('\n').find((line) => line.startsWith('Reason:')) || 'Reason: rule violation';
+  const reason = reasonLine.replace(/^Reason:\s*/, '') || 'rule violation';
+
+  if (durationKey === 'ignore') {
+    await ctx.editMessageText(`Ban ignored for user ${escapeHtml(targetId)}.`, { parse_mode: 'HTML' });
+    return;
+  }
+
+  await banUser(targetId, durationKey, reason);
+  await ctx.editMessageText(`User ${escapeHtml(targetId)} has been banned for ${getBanDurationLabel(durationKey)}.`, { parse_mode: 'HTML' });
 });
 
 bot.action('welcome:rankings', async (ctx) => {
@@ -371,14 +741,16 @@ bot.action('welcome:profile', async (ctx) => {
 });
 
 bot.action(/rankings:(today|total|weekly)/, async (ctx) => {
-  const mode = ctx.match[1];
   await ctx.answerCbQuery();
+  if (await maybeRejectUser(ctx, ctx.chat.id.toString())) return;
+  const mode = ctx.match[1];
   await sendRankingReply(ctx, mode);
 });
 
 bot.action(/topuser:(today|total|weekly)/, async (ctx) => {
-  const mode = ctx.match[1];
   await ctx.answerCbQuery();
+  if (await maybeRejectUser(ctx, ctx.chat.id.toString())) return;
+  const mode = ctx.match[1];
   const contextName = ctx.chat?.title || ctx.chat?.username || 'this chat';
   const entries = await getGlobalUsers(mode);
   const message = formatGlobalUsersText(entries, mode, contextName);
@@ -386,8 +758,9 @@ bot.action(/topuser:(today|total|weekly)/, async (ctx) => {
 });
 
 bot.action(/topgroups:(today|total|weekly)/, async (ctx) => {
-  const mode = ctx.match[1];
   await ctx.answerCbQuery();
+  if (await maybeRejectUser(ctx, ctx.chat.id.toString())) return;
+  const mode = ctx.match[1];
   const contextName = ctx.chat?.title || ctx.chat?.username || 'this chat';
   const entries = await getGlobalGroups(mode);
   const message = formatGlobalGroupsText(entries, mode, contextName);
@@ -412,19 +785,13 @@ bot.on('my_chat_member', async (ctx) => {
 
 bot.on('message', async (ctx) => {
   const message = ctx.message;
-  if (!message || message.text?.startsWith('/')) return;
+  if (!message) return;
   if (!ctx.chat || ctx.chat.type === 'private') return;
 
   const groupId = ctx.chat.id.toString();
-  const userId = message.from?.id?.toString();
-  const rawName = [message.from?.first_name, message.from?.last_name].filter(Boolean).join(' ');
-  const usernameValue = message.from?.username || '';
-  const displayName = normalizeDisplayName(rawName || usernameValue || 'Unknown');
-  const userName = normalizeDisplayName(usernameValue);
+  if (await maybeRejectUser(ctx, groupId)) return;
 
-  if (!userId) return;
-
-  await getOrCreateUser(groupId, userId, displayName, userName);
+  await checkSpamAndCount(ctx);
 });
 
 async function start() {
