@@ -273,24 +273,49 @@ async function checkSpamAndCount(ctx) {
   const groupLink = ctx.chat?.username ? `https://t.me/${ctx.chat.username}` : null;
 
   const { groupStatus } = await getUserStatus(userId, groupId);
+  const database = await connectDb();
+  const statuses = database.collection('user_status');
   const now = new Date();
+  const threshold = new Date(now.valueOf() - 3000);
 
-  const lastMessageAt = groupStatus?.lastMessageAt ? new Date(groupStatus.lastMessageAt) : null;
-  const isFast = lastMessageAt && (now - lastMessageAt) <= 3000;
-  const spamCount = isFast ? (groupStatus.spamCount || 0) + 1 : 1;
+  // Atomically update lastMessageAt and spamCount based on previous lastMessageAt
+  const updatePipeline = [
+    {
+      $set: {
+        lastMessageAt: now,
+        spamCount: {
+          $cond: [
+            { $gt: ['$lastMessageAt', threshold] },
+            { $add: ['$spamCount', 1] },
+            1,
+          ],
+        },
+        updatedAt: now,
+        createdAt: { $ifNull: ['$createdAt', now] },
+        userId: userId,
+        groupId: groupId,
+      },
+    },
+  ];
+
+  const res = await statuses.findOneAndUpdate(
+    { userId, groupId },
+    updatePipeline,
+    { upsert: true, returnDocument: 'after' },
+  );
+
+  const newStatus = res.value || {};
+  const spamCount = newStatus.spamCount || 0;
 
   if (spamCount >= 10) {
     const blockedUntil = new Date(now.valueOf() + 20 * 60 * 1000);
-    const blockCount = (groupStatus?.blockCount || 0) + 1;
-    const violationCount = (groupStatus?.violationCount || 0) + 1;
+    const blockCount = (newStatus.blockCount || 0) + 1;
+    const violationCount = (newStatus.violationCount || 0) + 1;
 
-    await updateUserStatus(userId, groupId, {
-      blockedUntil,
-      spamCount: 0,
-      lastMessageAt: now,
-      blockCount,
-      violationCount,
-    });
+    await statuses.updateOne(
+      { userId, groupId },
+      { $set: { blockedUntil, spamCount: 0, lastMessageAt: now, blockCount, violationCount, updatedAt: new Date() } },
+    );
 
     const blockText = [
       `<b>ChatFight - User blocked</b>`,
@@ -303,11 +328,6 @@ async function checkSpamAndCount(ctx) {
     await sendUserNotification(userId, buildBlockMessage(displayName, blockedUntil));
     return;
   }
-
-  await updateUserStatus(userId, groupId, {
-    lastMessageAt: now,
-    spamCount,
-  });
 
   await getOrCreateUser(groupId, userId, displayName, userName, groupName, groupLink);
   await recordGroupMilestone(groupId, ctx);
