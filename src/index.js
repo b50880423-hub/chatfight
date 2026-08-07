@@ -195,7 +195,7 @@ async function sendLoggerMessage(message) {
   }
 }
 
-async function sendWelcomeMessage(ctx) {
+async function sendWelcomeMessage(ctx, targetChatId = null) {
   const keyboard = {
     inline_keyboard: [[
       { text: '📊 Rankings', callback_data: 'welcome:rankings' },
@@ -203,7 +203,14 @@ async function sendWelcomeMessage(ctx) {
     ]],
   };
 
-  await ctx.reply('Welcome to ChatFight! Use the buttons below to explore the bot.', { reply_markup: keyboard });
+  const message = 'Welcome to ChatFight! Use the buttons below to explore the bot.';
+
+  if (targetChatId) {
+    await ctx.telegram.sendMessage(targetChatId, message, { reply_markup: keyboard });
+    return;
+  }
+
+  await ctx.reply(message, { reply_markup: keyboard });
 }
 
 bot.start(async (ctx) => {
@@ -336,6 +343,7 @@ bot.on('my_chat_member', async (ctx) => {
     };
     const message = buildLoggerMessage('group-added', payload);
     await sendLoggerMessage(message);
+    await sendWelcomeMessage(ctx, member.chat.id);
   }
 });
 
