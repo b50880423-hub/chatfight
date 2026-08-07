@@ -1,7 +1,12 @@
 import 'dotenv/config';
 import { Telegraf } from 'telegraf';
 import { MongoClient } from 'mongodb';
-import { formatRankingText, getUserUpdateForMessage, getWeekKey } from './rankingLogic.js';
+import {
+  formatRankingText,
+  getUserUpdateForMessage,
+  getWeekKey,
+  getISTDayKey,
+} from './rankingLogic.js';
 import { formatProfileText } from './profileLogic.js';
 import { formatGlobalUsersText, formatGlobalGroupsText, formatMyTopGroupsText } from './globalLogic.js';
 import {
@@ -275,7 +280,7 @@ async function recordGroupMilestone(groupId, ctx) {
   const users = database.collection('group_users');
 
   const now = new Date();
-  const dayKey = now.toISOString().slice(0, 10);
+  const dayKey = getISTDayKey(now);
 
   const result = await users.aggregate([
     {
@@ -467,7 +472,7 @@ async function getTopUsers(groupId, mode = 'today') {
   const database = await connectDb();
   const users = database.collection('group_users');
   const now = new Date();
-  const dayKey = now.toISOString().slice(0, 10);
+  const dayKey = getISTDayKey(now);
   const weekKey = getWeekKey(now);
 
   let query = { groupId };
@@ -531,7 +536,7 @@ async function getGlobalUsers(mode = 'today') {
   const database = await connectDb();
   const users = database.collection('group_users');
   const now = new Date();
-  const dayKey = now.toISOString().slice(0, 10);
+  const dayKey = getISTDayKey(now);
   const weekKey = getWeekKey(now);
 
   let match = {};
@@ -568,7 +573,7 @@ async function getGlobalGroups(mode = 'today') {
   const database = await connectDb();
   const users = database.collection('group_users');
   const now = new Date();
-  const dayKey = now.toISOString().slice(0, 10);
+  const dayKey = getISTDayKey(now);
   const weekKey = getWeekKey(now);
 
   let match = {};
