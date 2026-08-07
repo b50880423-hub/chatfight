@@ -6,6 +6,13 @@ function escapeHtml(value = '') {
     .replace(/"/g, '&quot;');
 }
 
+function normalizeDisplayName(value = '') {
+  const raw = String(value).trim();
+  if (!raw) return raw;
+  const stripped = raw.startsWith('@') ? raw.slice(1) : raw;
+  return stripped.replace(/_/g, ' ');
+}
+
 export function getWeekKey(date) {
   const copy = new Date(date);
   const day = copy.getUTCDay() || 7;
@@ -19,7 +26,7 @@ export function formatRankingText(topUsers, totalValue, mode = 'today', contextN
   const totalLabel = mode === 'total' ? 'All-time total' : mode === 'weekly' ? 'Week total' : 'Today total';
 
   const lines = topUsers.map((user, index) => {
-    const name = escapeHtml(user.userName || `User ${user.userId}`);
+    const name = escapeHtml(normalizeDisplayName(user.userName || `User ${user.userId}`));
     return `<b>${index + 1}.</b> <b>${name}</b> — ${user[metricKey] ?? 0}`;
   });
 

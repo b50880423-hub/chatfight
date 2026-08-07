@@ -6,8 +6,15 @@ function escapeHtml(value = '') {
     .replace(/"/g, '&quot;');
 }
 
+function normalizeDisplayName(value = '') {
+  const raw = String(value).trim();
+  if (!raw) return raw;
+  const stripped = raw.startsWith('@') ? raw.slice(1) : raw;
+  return stripped.replace(/_/g, ' ');
+}
+
 export function formatProfileText(user, rank, totalUsers, contextName) {
-  const name = escapeHtml(user.userName || `User ${user.userId}`);
+  const name = escapeHtml(normalizeDisplayName(user.userName || `User ${user.userId}`));
   const lines = ['<b>ChatFight - Profile</b>'];
 
   if (contextName) {
