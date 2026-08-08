@@ -1117,19 +1117,41 @@ async function start() {
     database.collection('mini_game_groups').distinct('groupId'),
   ]);
   const knownGroups = [...new Set([...rankingGroups, ...registeredGroups])];
+
   for (const groupId of knownGroups) {
     const [sample, registered] = await Promise.all([
       database.collection('group_users').findOne({ groupId }),
       database.collection('mini_game_groups').findOne({ groupId }),
     ]);
-    await registerMiniGameGroup(database, groupId, sample?.groupName || `Group ${groupId}`, sample?.groupLink || null);
+
+    await registerMiniGameGroup(
+      database,
+      groupId,
+      sample?.groupName || registered?.groupName || `Group ${groupId}`,
+      sample?.groupLink || registered?.groupLink || null
+    );
+
     if (registered?.enabled === false) {
       await database.collection('mini_game_groups').updateOne(
         { groupId },
         { $set: { enabled: false, updatedAt: new Date() } },
       );
+    } else {
+      // Make existing active groups due immediately after deployment.
+      await database.collection('mini_game_groups').updateOne(
+        { groupId },
+        {
+          $set: {
+            nextGameAt: new Date(),
+            enabled: true,
+            updatedAt: new Date(),
+          },
+        },
+      );
     }
   }
+
+  console.log(`[MiniGame] Startup groups scheduled: ${knownGroups.length}`);
 
   await bot.launch();
   console.log('Bot started');
