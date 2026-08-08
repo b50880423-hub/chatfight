@@ -18,7 +18,9 @@ function normalizeUsername(value = '') {
 }
 
 function buildUserLink(user) {
-  const name = escapeHtml(normalizeDisplayName(user.displayName || user.userName || `User ${user.userId}`));
+  const rawName = normalizeDisplayName(user.displayName || user.userName || `User ${user.userId}`);
+  const shortName = rawName.length > 14 ? `${rawName.slice(0, 14)}...` : rawName;
+  const name = escapeHtml(shortName);
   const userId = user.userId;
   const username = normalizeUsername(user.userName);
   const href = userId ? `tg://user?id=${userId}` : username ? `https://t.me/${username}` : null;
