@@ -114,7 +114,7 @@ export async function generateRankingImage(entries = [], options = {}) {
     <rect x="48" y="38" width="1104" height="604" rx="26" fill="#0a0d18" opacity=".30" filter="url(#shadow)"/>
     <rect x="72" y="62" width="1056" height="6" rx="3" fill="url(#bar)"/>
     <text x="72" y="112" class="title">${xml(title)}</text>
-    ${subtitle ? `<text x="72" y="143" class="subtitle">${xml(subtitle)}</text>` : ''}
+    ${subtitle ? `<text x="72" y="143" class="subtitle" textLength="1056" lengthAdjust="spacingAndGlyphs">${xml(subtitle)}</text>` : ''}
     ${rowSvg}
     ${empty}
     <text x="1128" y="620" text-anchor="end" class="subtitle">TOP 10</text>

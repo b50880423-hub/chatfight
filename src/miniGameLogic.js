@@ -282,11 +282,12 @@ export function formatMiniGameLeaderboard(entries, scope = 'chat') {
   return [`<b>${title}</b>`, '', ...lines].join('\n');
 }
 
-export function miniGameLeaderboardKeyboard() {
+export function miniGameLeaderboardKeyboard(selectedScope = 'chat') {
+  const mark = (scope) => scope === selectedScope ? ' ✅' : '';
   return {
     inline_keyboard: [[
-      { text: '💬 This Chat', callback_data: 'minigame_lb:chat' },
-      { text: '🌍 Global', callback_data: 'minigame_lb:global' },
+      { text: `💬 This Chat${mark('chat')}`, callback_data: 'minigame_lb:chat' },
+      { text: `🌍 Global${mark('global')}`, callback_data: 'minigame_lb:global' },
     ]],
   };
 }

@@ -38,7 +38,7 @@ export function formatProfileText(user, rank, totalUsers, contextName) {
   const lines = ['<b>ChatFight - Profile</b>'];
 
   if (contextName) {
-    lines.push(`<b>Group:</b> ${escapeHtml(cleanUnicode(contextName))}`);
+    lines.push(`<b>${escapeHtml(cleanUnicode(contextName))}</b>`);
   }
 
   lines.push(

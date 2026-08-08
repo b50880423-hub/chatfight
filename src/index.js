@@ -704,13 +704,14 @@ bot.start(async (ctx) => {
   await sendWelcomeMessage(ctx);
 });
 
-function buildRankingKeyboard(prefix = 'rankings') {
+function buildRankingKeyboard(prefix = 'rankings', selectedMode = 'today') {
+  const mark = (mode) => mode === selectedMode ? ' ✅' : '';
   return {
     inline_keyboard: [
-      [{ text: '📈 Total', callback_data: `${prefix}:total` }],
+      [{ text: `📈 Total${mark('total')}`, callback_data: `${prefix}:total` }],
       [
-        { text: '📅 Today', callback_data: `${prefix}:today` },
-        { text: '🗓️ Weekly', callback_data: `${prefix}:weekly` },
+        { text: `📅 Today${mark('today')}`, callback_data: `${prefix}:today` },
+        { text: `🗓️ Weekly${mark('weekly')}`, callback_data: `${prefix}:weekly` },
       ],
     ],
   };
@@ -835,10 +836,10 @@ async function sendRankingReply(ctx, mode = 'today') {
   const metricKey = mode === 'total' ? 'messageCount' : mode === 'weekly' ? 'weeklyMessageCount' : 'dailyMessageCount';
   const imageBuffer = await generateRankingImage(topUsers, {
     title: 'CHATFIGHT RANKINGS',
-    subtitle: `${contextName} • ${mode === 'total' ? 'ALL TIME' : mode === 'weekly' ? 'THIS WEEK' : 'TODAY'}`,
+    subtitle: contextName,
     valueKey: metricKey,
   });
-  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard() });
+  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard('rankings', mode) });
 }
 
 bot.command('leaderboard', async (ctx) => {
@@ -858,7 +859,7 @@ bot.command('leaderboard', async (ctx) => {
     valueKey: 'points',
     valueSuffix: ' pts',
   });
-  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: miniGameLeaderboardKeyboard() });
+  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: miniGameLeaderboardKeyboard('chat') });
 });
 
 bot.command(['rankings', 'ranking'], async (ctx) => {
@@ -877,7 +878,7 @@ bot.command('topuser', async (ctx) => {
     nameKey: 'displayName',
     valueKey: 'value',
   });
-  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard('topuser') });
+  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard('topuser', 'today') });
 });
 
 bot.command('topgroups', async (ctx) => {
@@ -891,7 +892,7 @@ bot.command('topgroups', async (ctx) => {
     nameKey: 'groupName',
     valueKey: 'value',
   });
-  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard('topgroups') });
+  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard('topgroups', 'today') });
 });
 
 bot.command('mytop', async (ctx) => {
@@ -1088,7 +1089,7 @@ bot.action(/minigame_lb:(chat|global)/, async (ctx) => {
     valueKey: 'points',
     valueSuffix: ' pts',
   });
-  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: miniGameLeaderboardKeyboard() });
+  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: miniGameLeaderboardKeyboard(scope) });
 });
 
 bot.action(/rankings:(today|total|weekly)/, async (ctx) => {
@@ -1111,7 +1112,7 @@ bot.action(/topuser:(today|total|weekly)/, async (ctx) => {
     nameKey: 'displayName',
     valueKey: 'value',
   });
-  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard('topuser') });
+  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard('topuser', mode) });
 });
 
 bot.action(/topgroups:(today|total|weekly)/, async (ctx) => {
@@ -1127,7 +1128,7 @@ bot.action(/topgroups:(today|total|weekly)/, async (ctx) => {
     nameKey: 'groupName',
     valueKey: 'value',
   });
-  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard('topgroups') });
+  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard('topgroups', mode) });
 });
 
 bot.on('my_chat_member', async (ctx) => {

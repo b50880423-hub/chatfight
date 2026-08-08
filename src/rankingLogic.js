@@ -84,17 +84,13 @@ export function formatRankingText(topUsers, totalValue, mode = 'today', contextN
     return `<b>${index + 1}.</b> <b>${nameLink}</b> — ${user[metricKey] ?? 0}`;
   });
 
-  const modeLabel = mode === 'total' ? 'Total' : mode === 'weekly' ? 'Weekly' : 'Today';
-
   return [
-    '<b>ChatFight - Rankings</b>',
-    `<b>Group:</b> ${escapeHtml(contextName)}`,
-    `<b>Mode:</b> ${modeLabel}`,
+    `<b>${escapeHtml(contextName)}</b>`,
     '',
     `<b>${title}</b>`,
     ...lines,
     '',
-    `<b>${totalLabel}:</b> ${totalValue}`,
+    `<b>${totalLabel}:</b> ${Number(totalValue || 0).toLocaleString('de-DE')}`,
   ].join('\n');
 }
 

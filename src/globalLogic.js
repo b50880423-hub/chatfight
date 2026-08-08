@@ -59,17 +59,13 @@ export function formatGlobalUsersText(entries, mode = 'today', contextName = 'th
     return `<b>${index + 1}.</b> <b>${nameLink}</b> — ${entry.value}`;
   });
 
-  const modeLabel = mode === 'total' ? 'Total' : mode === 'weekly' ? 'Weekly' : 'Today';
-
   return [
-    '<b>ChatFight - Top Users</b>',
-    `<b>Group:</b> ${escapeHtml(contextName)}`,
-    `<b>Mode:</b> ${modeLabel}`,
+    '<b>🌍 GLOBAL LEADERBOARD</b>',
     '',
     `<b>${title}</b>`,
     ...lines,
     '',
-    `<b>${totalLabel}:</b> ${entries[0]?.totalValue || 0}`,
+    `<b>${totalLabel}:</b> ${Number(entries[0]?.totalValue || 0).toLocaleString('de-DE')}`,
   ].join('\n');
 }
 
@@ -81,17 +77,13 @@ export function formatGlobalGroupsText(entries, mode = 'today', contextName = 't
     return `<b>${index + 1}.</b> <b>${nameLink}</b> — ${entry.value}`;
   });
 
-  const modeLabel = mode === 'total' ? 'Total' : mode === 'weekly' ? 'Weekly' : 'Today';
-
   return [
-    '<b>ChatFight - Top Groups</b>',
-    `<b>Group:</b> ${escapeHtml(contextName)}`,
-    `<b>Mode:</b> ${modeLabel}`,
+    '<b>🌍 GLOBAL GROUP LEADERBOARD</b>',
     '',
     `<b>${title}</b>`,
     ...lines,
     '',
-    `<b>${totalLabel}:</b> ${entries[0]?.totalValue || 0}`,
+    `<b>${totalLabel}:</b> ${Number(entries[0]?.totalValue || 0).toLocaleString('de-DE')}`,
   ].join('\n');
 }
 
