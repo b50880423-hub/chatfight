@@ -212,7 +212,7 @@ export async function handleMiniGameAnswer({ db, ctx }) {
   await ctx.reply(
     `🏆 ${userLink(message.from)} was the fastest!\n\n` +
     `⚡ Answered in <b>${seconds}s</b>\n` +
-    `🎯 Earned <b>${points} points</b>`,
+    `🎯 Earned <b>${Number(points).toLocaleString('de-DE')} points</b>`,
     { parse_mode: 'HTML', reply_to_message_id: message.message_id },
   );
   return true;
@@ -265,7 +265,7 @@ export function formatMiniGameLeaderboard(entries, scope = 'chat') {
   const lines = entries.map((entry, index) => {
     const name = escapeHtml(entry.displayName || entry.username || `User ${entry.userId}`);
     const link = `<a href="tg://user?id=${entry.userId}">${name}</a>`;
-    return `<b>${index + 1}.</b> ${link} — <b>${entry.points || 0}</b> pts`;
+    return `<b>${index + 1}.</b> ${link} — <b>${Number(entry.points || 0).toLocaleString('de-DE')}</b> pts`;
   });
   return [`<b>${title}</b>`, '', ...lines].join('\n');
 }
