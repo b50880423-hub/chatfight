@@ -68,6 +68,22 @@ test('new groups are scheduled for an immediate first game', async () => {
   assert.ok(games.documents[0].nextGameAt.valueOf() <= Date.now());
 });
 
+test('existing groups keep their scheduled next game time', async () => {
+  const scheduledAt = new Date(Date.now() + 30 * 60 * 1000);
+  const games = createFakeCollection([{
+    _id: 'one',
+    groupId: '-100',
+    groupName: 'Existing group',
+    nextGameAt: scheduledAt,
+    activeRound: null,
+    enabled: true,
+  }]);
+
+  await registerMiniGameGroup(createFakeDb(games), '-100', 'Existing group');
+
+  assert.equal(games.documents[0].nextGameAt.valueOf(), scheduledAt.valueOf());
+});
+
 test('a due game sends one game to its registered group', async () => {
   const games = createFakeCollection([{
     _id: 'one',

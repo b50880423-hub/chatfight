@@ -1117,23 +1117,16 @@ async function start() {
     database.collection('mini_game_groups').distinct('groupId'),
   ]);
   const knownGroups = [...new Set([...rankingGroups, ...registeredGroups])];
-  const startupNow = new Date();
   for (const groupId of knownGroups) {
     const [sample, registered] = await Promise.all([
       database.collection('group_users').findOne({ groupId }),
       database.collection('mini_game_groups').findOne({ groupId }),
     ]);
     await registerMiniGameGroup(database, groupId, sample?.groupName || `Group ${groupId}`, sample?.groupLink || null);
-    // Start one round in every known group after deployment/restart. Once the
-    // round is sent, the game module schedules the next round one hour later.
-    await database.collection('mini_game_groups').updateOne(
-      { groupId, activeRound: null },
-      { $set: { nextGameAt: startupNow, updatedAt: startupNow } },
-    );
     if (registered?.enabled === false) {
       await database.collection('mini_game_groups').updateOne(
         { groupId },
-        { $set: { enabled: false, updatedAt: startupNow } },
+        { $set: { enabled: false, updatedAt: new Date() } },
       );
     }
   }

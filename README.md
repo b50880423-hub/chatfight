@@ -48,7 +48,7 @@ This bot stores rankings in MongoDB. For deploys, use a remote or managed MongoD
 - Rule 5 block notices are shown in the group where the violation happened. Longer manual-ban buttons are sent only to `LOGGER_GROUP_ID`, and `/banuser` and `/unbanuser` work only there for the owner.
 - Only the first Rule 5 block notice is sent. Further ordinary messages are ignored silently until the 20-minute block expires; commands remain disabled.
 - /rankings shows the top 10 users for the current group.
-- Mini-games start automatically when the bot is deployed or added to a group, then run once per hour. Users only need to type the displayed word.
+- Mini-games start automatically when the bot is deployed or added to a group, then run once per hour. Restarts and redeploys preserve the existing schedule and do not start duplicate games. Users only need to type the displayed word.
 - Existing ranking, mini-game, moderation, and stats data is never reset, archived, deleted, or rewritten on startup. The bot continues counting from the current values.
 - /profile shows the calling user’s total, daily, weekly, and overall rank.
 - /topuser shows the top 10 global users across all groups the bot has seen.
