@@ -1152,6 +1152,7 @@ async function start() {
   }
 
   console.log(`[MiniGame] Startup groups scheduled: ${knownGroups.length}`);
+  await runMiniGames();
 
   await bot.launch();
   console.log('Bot started');
