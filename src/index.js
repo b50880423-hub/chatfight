@@ -1176,6 +1176,7 @@ async function start() {
   await bot.launch();
 
   console.log('Bot started');
+}
 
 start().catch((error) => {
   console.error('Failed to start bot', error);
