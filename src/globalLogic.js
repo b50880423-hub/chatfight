@@ -20,7 +20,7 @@ function normalizeUsername(value = '') {
 function buildUserLink(entry) {
   const rawName = normalizeDisplayName(entry.displayName || entry.userName || `User ${entry.userId}`);
   const cleanName = rawName.replace(/[\uD800-\uDFFF]/g, '');
-  const shortName = rawName.length > 28 ? `${rawName.slice(0, 28)}...` : rawName;
+  const shortName = rawName.length > 28 ? `${rawName.slice(0, 28)}...` : cleanName;
   const name = escapeHtml(shortName);
   const username = normalizeUsername(entry.userName);
   const href = entry.userId ? `tg://user?id=${entry.userId}` : username ? `https://t.me/${username}` : null;
