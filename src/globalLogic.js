@@ -35,7 +35,7 @@ export function formatGlobalUsersText(entries, mode = 'today', contextName = 'th
   const totalLabel = mode === 'total' ? 'All-time total' : mode === 'weekly' ? 'Week total' : 'Today total';
   const lines = entries.map((entry, index) => {
     const nameLink = buildUserLink(entry);
-    return `<b>${index + 1}.</b> <b>${nameLink}</b> — ${entry.value}`;
+    return `<b>${index + 1}.</b> <b>${nameLink}</b> — ${Number(entry.value || 0).toLocaleString('de-DE')}`;
   });
 
   const modeLabel = mode === 'total' ? 'Total' : mode === 'weekly' ? 'Weekly' : 'Today';
@@ -48,7 +48,7 @@ export function formatGlobalUsersText(entries, mode = 'today', contextName = 'th
     `<b>${title}</b>`,
     ...lines,
     '',
-    `<b>${totalLabel}:</b> ${entries[0]?.totalValue || 0}`,
+    `<b>${totalLabel}:</b> ${Number(entries[0]?.totalValue || 0).toLocaleString('de-DE')}`,
   ].join('\n');
 }
 
@@ -57,7 +57,7 @@ export function formatGlobalGroupsText(entries, mode = 'today', contextName = 't
   const totalLabel = mode === 'total' ? 'All-time total' : mode === 'weekly' ? 'Week total' : 'Today total';
   const lines = entries.map((entry, index) => {
     const nameLink = buildGroupLink(entry);
-    return `<b>${index + 1}.</b> <b>${nameLink}</b> — ${entry.value}`;
+    return `<b>${index + 1}.</b> <b>${nameLink}</b> — ${Number(entry.value || 0).toLocaleString('de-DE')}`;
   });
 
   const modeLabel = mode === 'total' ? 'Total' : mode === 'weekly' ? 'Weekly' : 'Today';
@@ -70,7 +70,7 @@ export function formatGlobalGroupsText(entries, mode = 'today', contextName = 't
     `<b>${title}</b>`,
     ...lines,
     '',
-    `<b>${totalLabel}:</b> ${entries[0]?.totalValue || 0}`,
+    `<b>${totalLabel}:</b> ${Number(entries[0]?.totalValue || 0).toLocaleString('de-DE')}`,
   ].join('\n');
 }
 
@@ -79,7 +79,7 @@ export function formatMyTopGroupsText(entries, displayName) {
   const lines = entries.map((entry, index) => {
     const groupName = escapeHtml(entry.groupName || entry.groupId);
     const groupLink = entry.groupLink ? `<a href="${escapeHtml(entry.groupLink)}">${groupName}</a>` : groupName;
-    return `<b>${index + 1}.</b> ${groupLink} — ${entry.messageCount || 0}`;
+    return `<b>${index + 1}.</b> ${groupLink} — ${Number(entry.messageCount || 0).toLocaleString('de-DE')}`;
   });
 
   return [
