@@ -44,10 +44,10 @@ export function formatProfileText(user, rank, totalUsers, contextName) {
   lines.push(
     `<b>User:</b> <b>${nameLink}</b>`,
     '',
-    `<b>Total messages:</b> ${user.messageCount || 0}`,
-    `<b>Today messages:</b> ${user.dailyMessageCount || 0}`,
-    `<b>This week:</b> ${user.weeklyMessageCount || 0}`,
-    `<b>Overall rank:</b> #${rank} of ${totalUsers}`,
+    `<b>Total messages:</b> ${Number(user.messageCount || 0).toLocaleString('de-DE')}`,
+    `<b>Today messages:</b> ${Number(user.dailyMessageCount || 0).toLocaleString('de-DE')}`,
+    `<b>This week:</b> ${Number(user.weeklyMessageCount || 0).toLocaleString('de-DE')}`,
+    `<b>Overall rank:</b> #${Number(rank || 0).toLocaleString('de-DE')} of ${Number(totalUsers || 0).toLocaleString('de-DE')}`,
     `<b>Joined:</b> ${new Date(user.createdAt).toLocaleDateString()}`,
   );
 

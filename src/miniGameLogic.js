@@ -277,7 +277,7 @@ export function formatMiniGameLeaderboard(entries, scope = 'chat') {
     const shortName = cleanName.length > 30 ? `${cleanName.slice(0, 30)}...` : cleanName;
     const name = escapeHtml(shortName);
     const link = `<a href="tg://user?id=${entry.userId}">${name}</a>`;
-    return `<b>${index + 1}.</b> ${link} — <b>${entry.points || 0}</b> pts`;
+    return `<b>${index + 1}.</b> ${link} — <b>${Number(entry.points || 0).toLocaleString('de-DE')}</b> pts`;
   });
   return [`<b>${title}</b>`, '', ...lines].join('\n');
 }
