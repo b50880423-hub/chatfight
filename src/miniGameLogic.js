@@ -264,6 +264,7 @@ export function formatMiniGameLeaderboard(entries, scope = 'chat') {
   if (!entries.length) return `<b>${title}</b>\n\nNo scores yet.`;
   const lines = entries.map((entry, index) => {
     const rawName = entry.displayName || entry.username || `User ${entry.userId}`;
+    const cleanName = String(rawName).replace(/[\uD800-\uDFFF]/g, '')
     const shortName = rawName.length > 14 ? `${rawName.slice(0, 14)}...` : rawName;
     const name = escapeHtml(shortName);
     const link = `<a href="tg://user?id=${entry.userId}">${name}</a>`;
