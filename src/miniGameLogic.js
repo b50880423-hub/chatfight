@@ -1,3 +1,4 @@
+console.log("[MiniGame] startDueMiniGames() CALLED");
 import { Input } from 'telegraf';
 import sharp from 'sharp';
 
