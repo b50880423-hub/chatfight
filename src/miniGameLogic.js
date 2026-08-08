@@ -1,4 +1,3 @@
-console.log("[MiniGame] startDueMiniGames() CALLED");
 import { Input } from 'telegraf';
 import sharp from 'sharp';
 
@@ -95,6 +94,8 @@ function chooseWord(previousWord = '') {
 }
 
 export async function startDueMiniGames({ db, telegram, logger = console }) {
+  console.log("[MiniGame] startDueMiniGames() CALLED");
+  
   const games = db.collection('mini_game_groups');
   const now = new Date();
   const due = await games
