@@ -1153,20 +1153,29 @@ async function start() {
 
   console.log(`[MiniGame] Startup groups scheduled: ${knownGroups.length}`);
 
-  await bot.launch();
-  console.log('Bot started');
-
   const runMiniGames = async () => {
     try {
       await expireMiniGames(database);
-      await startDueMiniGames({ db: database, telegram: bot.telegram, logger: console });
+
+      await startDueMiniGames({
+        db: database,
+        telegram: bot.telegram,
+        logger: console,
+      });
     } catch (error) {
-      console.error('Mini-game scheduler error:', error);
+      console.error('[MiniGame] Scheduler error:', error);
     }
   };
+
+  // Start mini-game scheduler BEFORE Telegram polling
   await runMiniGames();
   setInterval(runMiniGames, 15000);
-}
+
+  console.log('[MiniGame] Scheduler started');
+
+  await bot.launch();
+
+  console.log('Bot started');
 
 start().catch((error) => {
   console.error('Failed to start bot', error);
