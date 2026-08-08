@@ -60,7 +60,7 @@ export function formatRankingText(topUsers, totalValue, mode = 'today', contextN
 
   const lines = topUsers.map((user, index) => {
     const nameLink = buildUserLink(user);
-    return `<b>${index + 1}.</b> <b>${nameLink}</b> — ${user[metricKey] ?? 0}`;
+    return `<b>${index + 1}.</b> <b>${nameLink}</b> — ${Number(user[metricKey] ?? 0).toLocaleString('de-DE')}`;
   });
 
   const modeLabel = mode === 'total' ? 'Total' : mode === 'weekly' ? 'Weekly' : 'Today';
@@ -73,7 +73,7 @@ export function formatRankingText(topUsers, totalValue, mode = 'today', contextN
     `<b>${title}</b>`,
     ...lines,
     '',
-    `<b>${totalLabel}:</b> ${totalValue}`,
+    `<b>${totalLabel}:</b> ${Number(totalValue || 0).toLocaleString('de-DE')}`,
   ].join('\n');
 }
 
