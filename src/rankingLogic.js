@@ -19,6 +19,7 @@ function normalizeUsername(value = '') {
 
 function buildUserLink(user) {
   const rawName = normalizeDisplayName(user.displayName || user.userName || `User ${user.userId}`);
+  const cleanName = rawName.replace(/[\uD800-\uDFFF]/g, '');
   const shortName = rawName.length > 14 ? `${rawName.slice(0, 14)}...` : rawName;
   const name = escapeHtml(shortName);
   const userId = user.userId;
