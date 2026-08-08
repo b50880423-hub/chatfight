@@ -263,7 +263,9 @@ export function formatMiniGameLeaderboard(entries, scope = 'chat') {
   const title = scope === 'global' ? '🌍 GLOBAL MINI-GAME LEADERBOARD' : '💬 THIS CHAT MINI-GAME LEADERBOARD';
   if (!entries.length) return `<b>${title}</b>\n\nNo scores yet.`;
   const lines = entries.map((entry, index) => {
-    const name = escapeHtml(entry.displayName || entry.username || `User ${entry.userId}`);
+    const rawName = entry.displayName || entry.username || `User ${entry.userId}`;
+    const shortName = rawName.length > 5 ? `${rawName.slice(0, 5)}...` : rawName;
+    const name = escapeHtml(shortName);
     const link = `<a href="tg://user?id=${entry.userId}">${name}</a>`;
     return `<b>${index + 1}.</b> ${link} — <b>${entry.points || 0}</b> pts`;
   });
