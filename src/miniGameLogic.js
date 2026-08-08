@@ -217,6 +217,22 @@ export async function handleMiniGameAnswer({ db, ctx }) {
     { upsert: true },
   );
 
+  // Automatically react to the FIRST correct answer message.
+  // The atomic database claim above guarantees only the first correct
+  // answer reaches this point, so later correct answers cannot receive it.
+  try {
+    await ctx.telegram.callApi('setMessageReaction', {
+      chat_id: chat.id,
+      message_id: message.message_id,
+      reaction: [{ type: 'emoji', emoji: '🎉' }],
+    });
+  } catch (reactionError) {
+    console.warn(
+      '[MiniGame] Could not react to winner message:',
+      reactionError?.description || reactionError?.message || reactionError,
+    );
+  }
+
   const seconds = Math.floor(elapsedMs / 1000);
   await ctx.reply(
     `🏆 ${userLink(message.from)} was the fastest!\n\n` +
@@ -273,21 +289,20 @@ export function formatMiniGameLeaderboard(entries, scope = 'chat') {
   if (!entries.length) return `<b>${title}</b>\n\nNo scores yet.`;
   const lines = entries.map((entry, index) => {
     const rawName = entry.displayName || entry.username || `User ${entry.userId}`;
-    const cleanName = Array.from(String(rawName).replace(/[\uD800-\uDFFF]/g, ''));
-    const shortName = cleanName.length > 30 ? `${cleanName.slice(0, 30).join('')}...` : cleanName.join('');
+    const cleanName = String(rawName).replace(/[\uD800-\uDFFF]/g, '')
+    const shortName = rawName.length > 28 ? `${rawName.slice(0, 28)}...` : rawName;
     const name = escapeHtml(shortName);
     const link = `<a href="tg://user?id=${entry.userId}">${name}</a>`;
-    return `<b>${index + 1}.</b> ${link} — <b>${Number(entry.points || 0).toLocaleString('de-DE')}</b> pts`;
+    return `<b>${index + 1}.</b> ${link} — <b>${entry.points || 0}</b> pts`;
   });
   return [`<b>${title}</b>`, '', ...lines].join('\n');
 }
 
-export function miniGameLeaderboardKeyboard(selectedScope = 'chat') {
-  const mark = (scope) => scope === selectedScope ? ' ✅' : '';
+export function miniGameLeaderboardKeyboard() {
   return {
     inline_keyboard: [[
-      { text: `💬 This Chat${mark('chat')}`, callback_data: 'minigame_lb:chat' },
-      { text: `🌍 Global${mark('global')}`, callback_data: 'minigame_lb:global' },
+      { text: '💬 This Chat', callback_data: 'minigame_lb:chat' },
+      { text: '🌍 Global', callback_data: 'minigame_lb:global' },
     ]],
   };
 }
