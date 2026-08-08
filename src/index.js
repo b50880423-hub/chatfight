@@ -707,24 +707,31 @@ function buildRankingKeyboard(prefix = 'rankings') {
 
 async function sendPhotoThenText(ctx, imageBuffer, text, options = {}) {
   // Callback buttons edit/delete the old bot message. Remove it first so the
-  // new output is always ordered: image -> separate text message.
+  // refreshed result is sent as one single photo message.
   if (ctx.callbackQuery?.message) {
     try {
       await ctx.deleteMessage();
     } catch (_) {}
   }
 
-  await ctx.replyWithPhoto({ source: imageBuffer });
+  // Photo + leaderboard/profile text + buttons are ONE Telegram message.
+  // The blank lines create the requested visual separation between the image
+  // and the text because the text is sent as the photo caption.
+  const cleanText = String(text).replace(/[\uD800-\uDFFF]/g, '');
+  const caption = `\n\n${cleanText}`;
 
-  // Keep the image and leaderboard text as separate messages with a small
-  // visual gap between them. The invisible separator creates the spacing
-  // without adding a visible caption to the photo.
-  await ctx.reply('\u2063');
+  if (caption.length > 1024) {
+    console.warn(`[Ranking] Photo caption is ${caption.length} characters; Telegram limit is 1024.`);
+  }
 
-  return ctx.reply(String(text).replace(/[\uD800-\uDFFF]/g, ''), {
-    parse_mode: 'HTML',
-    ...options,
-  });
+  return ctx.replyWithPhoto(
+    { source: imageBuffer },
+    {
+      caption,
+      parse_mode: 'HTML',
+      ...options,
+    },
+  );
 }
 
 async function sendOrEditMessage(ctx, text, options = {}) {
