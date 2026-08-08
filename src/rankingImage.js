@@ -1,8 +1,14 @@
 import sharp from 'sharp';
 
 function cleanText(value = '') {
-  return String(value ?? '')
-    .replace(/[\uD800-\uDFFF]/g, '')
+  // Remove ONLY unpaired UTF-16 surrogates. Valid surrogate pairs
+  // (emoji, mathematical Unicode letters, historic scripts, etc.) are kept.
+  return Array.from(String(value ?? ''))
+    .filter((char) => {
+      const codePoint = char.codePointAt(0);
+      return codePoint < 0xD800 || codePoint > 0xDFFF;
+    })
+    .join('')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -16,9 +22,24 @@ function xml(value = '') {
     .replace(/'/g, '&apos;');
 }
 
-function shorten(value, max = 34) {
-  const text = cleanText(value) || 'Unknown';
-  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+function graphemeCount(value) {
+  if (typeof Intl !== 'undefined' && Intl.Segmenter) {
+    return Array.from(new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(value)).length;
+  }
+  return Array.from(value).length;
+}
+
+function imageName(value) {
+  return cleanText(value) || 'Unknown';
+}
+
+function fitNameFontSize(value, base = 25) {
+  const count = graphemeCount(value);
+  if (count <= 18) return base;
+  if (count <= 26) return Math.max(base - 2, 18);
+  if (count <= 36) return Math.max(base - 5, 16);
+  if (count <= 50) return 15;
+  return 13;
 }
 
 function formatNumber(value) {
@@ -45,13 +66,14 @@ export async function generateRankingImage(entries = [], options = {}) {
   const rowSvg = rows.map((entry, index) => {
     const y = rowStart + index * rowHeight;
     const rank = rankSymbols[index] || `${index + 1}.`;
-    const name = shorten(entry[nameKey] || entry.userName || entry.username || entry.groupName || entry.groupId, 34);
+    const name = imageName(entry[nameKey] || entry.userName || entry.username || entry.groupName || entry.groupId);
+    const nameFontSize = fitNameFontSize(name);
     const value = `${formatNumber(entry[valueKey])}${valueSuffix}`;
     const fill = index < 3 ? '#ffffff' : '#e7e9f4';
 
     return `
       <text x="78" y="${y}" class="rank">${xml(rank)}</text>
-      <text x="150" y="${y}" class="name">${xml(name)}</text>
+      <text x="150" y="${y}" class="name" style="font-size:${nameFontSize}px">${xml(name)}</text>
       <text x="1115" y="${y}" text-anchor="end" class="value" fill="${fill}">${xml(value)}</text>
       <line x1="72" y1="${y + 16}" x2="1128" y2="${y + 16}" class="line" />
     `;
@@ -104,8 +126,10 @@ export async function generateRankingImage(entries = [], options = {}) {
 export async function generateProfileImage(user, rank, totalUsers, contextName = '') {
   const width = 1200;
   const height = 570;
-  const name = shorten(user?.displayName || user?.userName || `User ${user?.userId || ''}`, 34);
-  const group = shorten(contextName, 48);
+  const name = imageName(user?.displayName || user?.userName || `User ${user?.userId || ''}`);
+  const group = imageName(contextName);
+  const nameFontSize = fitNameFontSize(name, 32);
+  const groupFontSize = fitNameFontSize(group, 19);
   const total = formatNumber(user?.messageCount);
   const today = formatNumber(user?.dailyMessageCount);
   const weekly = formatNumber(user?.weeklyMessageCount);
@@ -128,8 +152,8 @@ export async function generateProfileImage(user, rank, totalUsers, contextName =
     <rect width="1200" height="570" rx="34" fill="url(#bg)"/>
     <circle cx="1080" cy="30" r="190" fill="#ffffff" opacity=".04"/>
     <text x="72" y="80" class="title">CHATFIGHT PROFILE</text>
-    <text x="72" y="125" class="name">${xml(name)}</text>
-    ${group ? `<text x="72" y="157" class="label">${xml(group)}</text>` : ''}
+    <text x="72" y="125" class="name" style="font-size:${nameFontSize}px">${xml(name)}</text>
+    ${group ? `<text x="72" y="157" class="label" style="font-size:${groupFontSize}px">${xml(group)}</text>` : ''}
 
     <rect x="72" y="205" width="330" height="155" rx="24" fill="#ffffff" opacity=".08"/>
     <rect x="435" y="205" width="330" height="155" rx="24" fill="#ffffff" opacity=".08"/>

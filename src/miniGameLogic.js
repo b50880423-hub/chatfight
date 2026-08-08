@@ -26,12 +26,21 @@ function pointsForElapsedMs(elapsedMs) {
   return 1;
 }
 
+function cleanUnicode(value = '') {
+  return Array.from(String(value || ''))
+    .filter((char) => {
+      const codePoint = char.codePointAt(0);
+      return codePoint < 0xD800 || codePoint > 0xDFFF;
+    })
+    .join('');
+}
+
 function escapeHtml(value = '') {
-  return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  return cleanUnicode(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 function displayName(from) {
-  return [from?.first_name, from?.last_name].filter(Boolean).join(' ') || from?.username || `User ${from?.id || ''}`;
+  return cleanUnicode([from?.first_name, from?.last_name].filter(Boolean).join(' ') || from?.username || `User ${from?.id || ''}`);
 }
 
 function userLink(from) {
@@ -212,7 +221,7 @@ export async function handleMiniGameAnswer({ db, ctx }) {
   await ctx.reply(
     `🏆 ${userLink(message.from)} was the fastest!\n\n` +
     `⚡ Answered in <b>${seconds}s</b>\n` +
-    `🎯 Earned <b>${Number(points).toLocaleString('de-DE')} points</b>`,
+    `🎯 Earned <b>${points} points</b>`,
     { parse_mode: 'HTML', reply_to_message_id: message.message_id },
   );
   return true;
@@ -263,9 +272,12 @@ export function formatMiniGameLeaderboard(entries, scope = 'chat') {
   const title = scope === 'global' ? '🌍 GLOBAL MINI-GAME LEADERBOARD' : '💬 THIS CHAT MINI-GAME LEADERBOARD';
   if (!entries.length) return `<b>${title}</b>\n\nNo scores yet.`;
   const lines = entries.map((entry, index) => {
-    const name = escapeHtml(entry.displayName || entry.username || `User ${entry.userId}`);
+    const rawName = entry.displayName || entry.username || `User ${entry.userId}`;
+    const cleanName = String(rawName).replace(/[\uD800-\uDFFF]/g, '')
+    const shortName = rawName.length > 28 ? `${rawName.slice(0, 28)}...` : rawName;
+    const name = escapeHtml(shortName);
     const link = `<a href="tg://user?id=${entry.userId}">${name}</a>`;
-    return `<b>${index + 1}.</b> ${link} — <b>${Number(entry.points || 0).toLocaleString('de-DE')}</b> pts`;
+    return `<b>${index + 1}.</b> ${link} — <b>${entry.points || 0}</b> pts`;
   });
   return [`<b>${title}</b>`, '', ...lines].join('\n');
 }

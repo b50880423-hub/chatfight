@@ -26,6 +26,17 @@ function escapeHtml(value = '') {
     .replace(/"/g, '&quot;');
 }
 
+function cleanUnicode(value = '') {
+  // Remove only invalid/unpaired UTF-16 surrogates. Keep valid Unicode
+  // surrogate pairs used by emoji and many fancy Unicode name characters.
+  return Array.from(String(value ?? ''))
+    .filter((char) => {
+      const codePoint = char.codePointAt(0);
+      return codePoint < 0xD800 || codePoint > 0xDFFF;
+    })
+    .join('');
+}
+
 function normalizeDisplayName(value = '') {
   return String(value || '').trim();
 }
@@ -717,7 +728,7 @@ async function sendPhotoThenText(ctx, imageBuffer, text, options = {}) {
   // Photo + leaderboard/profile text + buttons are ONE Telegram message.
   // The blank lines create the requested visual separation between the image
   // and the text because the text is sent as the photo caption.
-  const cleanText = String(text).replace(/[\uD800-\uDFFF]/g, '');
+  const cleanText = cleanUnicode(text);
   const caption = `\n\n${cleanText}`;
 
   if (caption.length > 1024) {
@@ -735,7 +746,7 @@ async function sendPhotoThenText(ctx, imageBuffer, text, options = {}) {
 }
 
 async function sendOrEditMessage(ctx, text, options = {}) {
-  text = String(text).replace(/[\uD800-\uDFFF]/g, '');
+  text = cleanUnicode(text);
   
   if (ctx.callbackQuery?.message) {
     try {

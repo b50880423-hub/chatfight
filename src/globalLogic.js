@@ -17,8 +17,29 @@ function normalizeUsername(value = '') {
   return stripped;
 }
 
+function cleanUnicode(value = '') {
+  return Array.from(String(value || ''))
+    .filter((char) => {
+      const codePoint = char.codePointAt(0);
+      return codePoint < 0xD800 || codePoint > 0xDFFF;
+    })
+    .join('');
+}
+
+function limitUnicodeName(value, max = 30) {
+  const text = cleanUnicode(value).trim();
+  if (typeof Intl !== 'undefined' && Intl.Segmenter) {
+    const graphemes = Array.from(new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text), x => x.segment);
+    return graphemes.length > max ? `${graphemes.slice(0, max).join('')}...` : text;
+  }
+  const chars = Array.from(text);
+  return chars.length > max ? `${chars.slice(0, max).join('')}...` : text;
+}
+
 function buildUserLink(entry) {
-  const name = escapeHtml(normalizeDisplayName(entry.displayName || entry.userName || `User ${entry.userId}`));
+  const rawName = normalizeDisplayName(entry.displayName || entry.userName || `User ${entry.userId}`);
+  const shortName = limitUnicodeName(rawName, 30);
+  const name = escapeHtml(shortName);
   const username = normalizeUsername(entry.userName);
   const href = entry.userId ? `tg://user?id=${entry.userId}` : username ? `https://t.me/${username}` : null;
   return href ? `<a href="${escapeHtml(href)}">${name}</a>` : name;
@@ -35,7 +56,7 @@ export function formatGlobalUsersText(entries, mode = 'today', contextName = 'th
   const totalLabel = mode === 'total' ? 'All-time total' : mode === 'weekly' ? 'Week total' : 'Today total';
   const lines = entries.map((entry, index) => {
     const nameLink = buildUserLink(entry);
-    return `<b>${index + 1}.</b> <b>${nameLink}</b> — ${Number(entry.value || 0).toLocaleString('de-DE')}`;
+    return `<b>${index + 1}.</b> <b>${nameLink}</b> — ${entry.value}`;
   });
 
   const modeLabel = mode === 'total' ? 'Total' : mode === 'weekly' ? 'Weekly' : 'Today';
@@ -48,7 +69,7 @@ export function formatGlobalUsersText(entries, mode = 'today', contextName = 'th
     `<b>${title}</b>`,
     ...lines,
     '',
-    `<b>${totalLabel}:</b> ${Number(entries[0]?.totalValue || 0).toLocaleString('de-DE')}`,
+    `<b>${totalLabel}:</b> ${entries[0]?.totalValue || 0}`,
   ].join('\n');
 }
 
@@ -57,7 +78,7 @@ export function formatGlobalGroupsText(entries, mode = 'today', contextName = 't
   const totalLabel = mode === 'total' ? 'All-time total' : mode === 'weekly' ? 'Week total' : 'Today total';
   const lines = entries.map((entry, index) => {
     const nameLink = buildGroupLink(entry);
-    return `<b>${index + 1}.</b> <b>${nameLink}</b> — ${Number(entry.value || 0).toLocaleString('de-DE')}`;
+    return `<b>${index + 1}.</b> <b>${nameLink}</b> — ${entry.value}`;
   });
 
   const modeLabel = mode === 'total' ? 'Total' : mode === 'weekly' ? 'Weekly' : 'Today';
@@ -70,7 +91,7 @@ export function formatGlobalGroupsText(entries, mode = 'today', contextName = 't
     `<b>${title}</b>`,
     ...lines,
     '',
-    `<b>${totalLabel}:</b> ${Number(entries[0]?.totalValue || 0).toLocaleString('de-DE')}`,
+    `<b>${totalLabel}:</b> ${entries[0]?.totalValue || 0}`,
   ].join('\n');
 }
 
@@ -79,7 +100,7 @@ export function formatMyTopGroupsText(entries, displayName) {
   const lines = entries.map((entry, index) => {
     const groupName = escapeHtml(entry.groupName || entry.groupId);
     const groupLink = entry.groupLink ? `<a href="${escapeHtml(entry.groupLink)}">${groupName}</a>` : groupName;
-    return `<b>${index + 1}.</b> ${groupLink} — ${Number(entry.messageCount || 0).toLocaleString('de-DE')}`;
+    return `<b>${index + 1}.</b> ${groupLink} — ${entry.messageCount || 0}`;
   });
 
   return [
