@@ -220,8 +220,43 @@ export async function handleMiniGameAnswer({ db, ctx }) {
 
 export async function getMiniGameLeaderboard(db, groupId = null, limit = 10) {
   const scores = db.collection('mini_game_scores');
-  const match = groupId ? { groupId } : {};
-  return scores.find(match).sort({ points: -1, wins: -1, displayName: 1 }).limit(limit).toArray();
+
+  // THIS CHAT:
+  // Show only scores from the current group.
+  // Each user has only one record in this group.
+  if (groupId) {
+    return scores
+      .find({ groupId })
+      .sort({ points: -1, wins: -1, displayName: 1 })
+      .limit(limit)
+      .toArray();
+  }
+
+  // GLOBAL:
+  // Combine all group scores belonging to the same user.
+  // Therefore one user appears only once.
+  return scores.aggregate([
+    {
+      $group: {
+        _id: '$userId',
+        userId: { $first: '$userId' },
+        points: { $sum: { $ifNull: ['$points', 0] } },
+        wins: { $sum: { $ifNull: ['$wins', 0] } },
+        displayName: { $first: '$displayName' },
+        username: { $first: '$username' },
+      },
+    },
+    {
+      $sort: {
+        points: -1,
+        wins: -1,
+        displayName: 1,
+      },
+    },
+    {
+      $limit: limit,
+    },
+  ]).toArray();
 }
 
 export function formatMiniGameLeaderboard(entries, scope = 'chat') {
