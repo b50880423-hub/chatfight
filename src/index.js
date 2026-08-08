@@ -705,8 +705,6 @@ function buildRankingKeyboard(prefix = 'rankings') {
 }
 
 async function sendOrEditMessage(ctx, text, options = {}) {
-  text = String(text).replace(/[\uD800-\uDFFF]/g, '');
-  
   if (ctx.callbackQuery?.message) {
     try {
       return await ctx.editMessageText(text, {
