@@ -102,6 +102,8 @@ export async function startDueMiniGames({ db, telegram, logger = console }) {
     .limit(50)
     .toArray();
 
+  console.log(`[MiniGame] Due groups: ${due.length}`);
+
   for (const game of due) {
     const word = chooseWord(game.lastWord || '');
     const claimed = await games.findOneAndUpdate(
