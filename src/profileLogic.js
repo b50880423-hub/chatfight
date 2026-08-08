@@ -26,8 +26,14 @@ function cleanUnicode(value = '') {
     .join('');
 }
 
+function limitUnicodeName(value, max = 30) {
+  const chars = Array.from(cleanUnicode(value).trim());
+  return chars.length > max ? `${chars.slice(0, max).join('')}...` : chars.join('');
+}
+
 function buildUserLink(user) {
-  const name = escapeHtml(cleanUnicode(normalizeDisplayName(user.displayName || user.userName || `User ${user.userId}`)));
+  const rawName = normalizeDisplayName(user.displayName || user.userName || `User ${user.userId}`);
+  const name = escapeHtml(limitUnicodeName(rawName, 30));
   const username = normalizeUsername(user.userName);
   const href = user.userId ? `tg://user?id=${user.userId}` : username ? `https://t.me/${username}` : null;
   return href ? `<a href="${escapeHtml(href)}">${name}</a>` : name;

@@ -28,10 +28,6 @@ function cleanUnicode(value = '') {
 
 function limitUnicodeName(value, max = 30) {
   const text = cleanUnicode(value).trim();
-  if (typeof Intl !== 'undefined' && Intl.Segmenter) {
-    const graphemes = Array.from(new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text), x => x.segment);
-    return graphemes.length > max ? `${graphemes.slice(0, max).join('')}...` : text;
-  }
   const chars = Array.from(text);
   return chars.length > max ? `${chars.slice(0, max).join('')}...` : text;
 }

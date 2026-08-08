@@ -273,8 +273,8 @@ export function formatMiniGameLeaderboard(entries, scope = 'chat') {
   if (!entries.length) return `<b>${title}</b>\n\nNo scores yet.`;
   const lines = entries.map((entry, index) => {
     const rawName = entry.displayName || entry.username || `User ${entry.userId}`;
-    const cleanName = String(rawName).replace(/[\uD800-\uDFFF]/g, '')
-    const shortName = cleanName.length > 30 ? `${cleanName.slice(0, 30)}...` : cleanName;
+    const cleanName = Array.from(String(rawName).replace(/[\uD800-\uDFFF]/g, ''));
+    const shortName = cleanName.length > 30 ? `${cleanName.slice(0, 30).join('')}...` : cleanName.join('');
     const name = escapeHtml(shortName);
     const link = `<a href="tg://user?id=${entry.userId}">${name}</a>`;
     return `<b>${index + 1}.</b> ${link} — <b>${Number(entry.points || 0).toLocaleString('de-DE')}</b> pts`;

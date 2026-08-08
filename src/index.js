@@ -877,6 +877,7 @@ bot.command('topuser', async (ctx) => {
     subtitle: 'GLOBAL • TODAY',
     nameKey: 'displayName',
     valueKey: 'value',
+    truncateName: false,
   });
   await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard('topuser', 'today') });
 });
@@ -891,6 +892,7 @@ bot.command('topgroups', async (ctx) => {
     subtitle: 'GLOBAL • TODAY',
     nameKey: 'groupName',
     valueKey: 'value',
+    truncateName: false,
   });
   await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard('topgroups', 'today') });
 });
@@ -1111,6 +1113,7 @@ bot.action(/topuser:(today|total|weekly)/, async (ctx) => {
     subtitle: `GLOBAL • ${mode === 'total' ? 'ALL TIME' : mode === 'weekly' ? 'THIS WEEK' : 'TODAY'}`,
     nameKey: 'displayName',
     valueKey: 'value',
+    truncateName: false,
   });
   await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard('topuser', mode) });
 });
@@ -1127,6 +1130,7 @@ bot.action(/topgroups:(today|total|weekly)/, async (ctx) => {
     subtitle: `GLOBAL • ${mode === 'total' ? 'ALL TIME' : mode === 'weekly' ? 'THIS WEEK' : 'TODAY'}`,
     nameKey: 'groupName',
     valueKey: 'value',
+    truncateName: false,
   });
   await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard('topgroups', mode) });
 });
