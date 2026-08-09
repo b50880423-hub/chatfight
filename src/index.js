@@ -66,7 +66,10 @@ const mongoUri = process.env.MONGODB_URI || (process.env.NODE_ENV === 'developme
 const dbName = process.env.MONGODB_DB_NAME || 'chatfight';
 const loggerChatId = getLoggerChatId(process.env);
 const publicGroupLink = process.env.PUBLIC_GROUP_LINK || '';
-const ownerId = process.env.OWNER_ID || '';
+const ownerIds = (process.env.OWNER_IDS || '')
+  .split(',')
+  .map(id => id.trim())
+  .filter(Boolean);
 
 if (!token) {
   console.error('TELEGRAM_BOT_TOKEN is required');
@@ -662,7 +665,7 @@ async function getUserTopGroups(userId) {
 }
 
 function isOwner(userId) {
-  return ownerId && String(userId) === String(ownerId);
+  return ownerIds.includes(String(userId));
 }
 
 async function logBotStartOnce(payload) {
