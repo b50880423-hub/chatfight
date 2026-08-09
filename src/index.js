@@ -753,14 +753,34 @@ async function sendPhotoThenText(ctx, imageBuffer, text, options = {}) {
     console.warn(`[Ranking] Photo caption is ${caption.length} characters; Telegram limit is 1024.`);
   }
 
-  return ctx.replyWithPhoto(
-    { source: imageBuffer },
-    {
-      caption,
-      parse_mode: 'HTML',
-      ...options,
-    },
-  );
+  try {
+    return await ctx.replyWithPhoto(
+      { source: imageBuffer },
+      {
+        caption,
+        parse_mode: 'HTML',
+        ...options,
+      },
+    );
+  } catch (error) {
+    const description = error?.response?.description || error?.message || '';
+    const text = String(description).toLowerCase();
+
+    // Some groups restrict media even when the bot can send normal messages.
+    // Do not let a profile/ranking command crash the whole update in that case.
+    if (text.includes('not enough rights to send photos') ||
+        text.includes('not enough rights to send photo') ||
+        text.includes('can\'t send photos') ||
+        text.includes('can\'t send media')) {
+      console.warn('[Media] Photo permission missing; sending text fallback:', description);
+      return ctx.reply(cleanText, {
+        parse_mode: 'HTML',
+        ...options,
+      });
+    }
+
+    throw error;
+  }
 }
 
 async function sendOrEditMessage(ctx, text, options = {}) {

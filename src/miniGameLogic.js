@@ -125,9 +125,9 @@ export async function startDueMiniGames({ db, telegram, logger = console }) {
     if (!claimed?.activeRound) continue;
 
     const round = claimed.activeRound;
+    const caption = '⚡ Be the first to write the word shown in the photo to climb the mini-game leaderboard.\n\n⏱️ <b>Time remaining: 10 minutes</b>';
     try {
       const image = await renderGameImage(round.word);
-      const caption = '⚡ Be the first to write the word shown in the photo to climb the mini-game leaderboard.\n\n⏱️ <b>Time remaining: 10 minutes</b>';
       await telegram.sendPhoto(claimed.groupId, Input.fromBuffer(image, 'chatfight-game.png'), {
         caption,
         parse_mode: 'HTML',
