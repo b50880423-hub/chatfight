@@ -735,17 +735,9 @@ function buildRankingKeyboard(prefix = 'rankings') {
 }
 
 async function sendPhotoThenText(ctx, imageBuffer, text, options = {}) {
-  // Callback buttons edit/delete the old bot message. Remove it first so the
-  // refreshed result is sent as one single photo message.
-  if (ctx.callbackQuery?.message) {
-    try {
-      await ctx.deleteMessage();
-    } catch (_) {}
-  }
-
-  // Photo + leaderboard/profile text + buttons are ONE Telegram message.
-  // The blank lines create the requested visual separation between the image
-  // and the text because the text is sent as the photo caption.
+  // When a ranking/profile button is pressed, UPDATE THE EXISTING MESSAGE
+  // instead of deleting it and sending another message. This prevents a
+  // new ranking message from appearing every time a button is clicked.
   const cleanText = cleanUnicode(text);
   const caption = `\n\n${cleanText}`;
 
@@ -753,6 +745,72 @@ async function sendPhotoThenText(ctx, imageBuffer, text, options = {}) {
     console.warn(`[Ranking] Photo caption is ${caption.length} characters; Telegram limit is 1024.`);
   }
 
+  if (ctx.callbackQuery?.message) {
+    const message = ctx.callbackQuery.message;
+
+    // Ranking/profile callback came from an existing photo message.
+    // Edit that same photo and its caption/buttons.
+    if (message.photo?.length) {
+      try {
+        return await ctx.editMessageMedia(
+          {
+            type: 'photo',
+            media: { source: imageBuffer },
+            caption,
+            parse_mode: 'HTML',
+          },
+          options,
+        );
+      } catch (error) {
+        const description = error?.response?.description || error?.message || '';
+        const lower = String(description).toLowerCase();
+
+        if (lower.includes('message is not modified')) {
+          return null;
+        }
+
+        // If Telegram refuses the new media, keep the existing message and
+        // at least update its caption/buttons when possible.
+        if (
+          lower.includes('not enough rights to send photos') ||
+          lower.includes('not enough rights to send photo') ||
+          lower.includes("can't send photos") ||
+          lower.includes("can't send media")
+        ) {
+          console.warn('[Media] Photo permission missing; updating existing ranking caption instead:', description);
+          try {
+            return await ctx.editMessageCaption(caption, {
+              parse_mode: 'HTML',
+              ...options,
+            });
+          } catch (_) {
+            return null;
+          }
+        }
+
+        throw error;
+      }
+    }
+
+    // The previous message may be a text fallback because photo sending was
+    // unavailable. Do not create another message; edit the existing one.
+    try {
+      return await ctx.editMessageText(cleanText, {
+        parse_mode: 'HTML',
+        ...options,
+      });
+    } catch (error) {
+      if (
+        error?.response?.error_code === 400 &&
+        error?.response?.description?.includes('message is not modified')
+      ) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  // Commands such as /rankings intentionally create a new message.
   try {
     return await ctx.replyWithPhoto(
       { source: imageBuffer },
@@ -764,19 +822,38 @@ async function sendPhotoThenText(ctx, imageBuffer, text, options = {}) {
     );
   } catch (error) {
     const description = error?.response?.description || error?.message || '';
-    const text = String(description).toLowerCase();
+    const lower = String(description).toLowerCase();
 
-    // Some groups restrict media even when the bot can send normal messages.
-    // Do not let a profile/ranking command crash the whole update in that case.
-    if (text.includes('not enough rights to send photos') ||
-        text.includes('not enough rights to send photo') ||
-        text.includes('can\'t send photos') ||
-        text.includes('can\'t send media')) {
-      console.warn('[Media] Photo permission missing; sending text fallback:', description);
-      return ctx.reply(cleanText, {
-        parse_mode: 'HTML',
-        ...options,
-      });
+    if (
+      lower.includes('not enough rights to send photos') ||
+      lower.includes('not enough rights to send photo') ||
+      lower.includes("can't send photos") ||
+      lower.includes("can't send media")
+    ) {
+      console.warn('[Media] Photo permission missing; trying text fallback:', description);
+      try {
+        return await ctx.reply(cleanText, {
+          parse_mode: 'HTML',
+          ...options,
+        });
+      } catch (fallbackError) {
+        const fallbackDescription = fallbackError?.response?.description || fallbackError?.message || '';
+        const fallbackLower = String(fallbackDescription).toLowerCase();
+
+        // If the bot is also forbidden from sending text, do NOT let the
+        // Telegram error crash Node/Render and cause the same update to be
+        // delivered again. The bot simply cannot reply in this chat.
+        if (
+          fallbackLower.includes('not enough rights to send text messages') ||
+          fallbackLower.includes("can't send messages") ||
+          fallbackLower.includes('not enough rights to send messages')
+        ) {
+          console.warn('[Telegram] Bot has no permission to send text messages in this chat:', fallbackDescription);
+          return null;
+        }
+
+        throw fallbackError;
+      }
     }
 
     throw error;
