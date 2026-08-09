@@ -10,7 +10,8 @@ function cleanUnicode(value = '') {
     })
     .join('');
 }
-import { Telegraf, Input } from 'telegraf';
+import {
+Telegraf, Input } from 'telegraf';
 import { MongoClient } from 'mongodb';
 import {
   formatRankingText,
@@ -19,7 +20,7 @@ import {
   getISTDayKey,
 } from './rankingLogic.js';
 import { formatProfileText } from './profileLogic.js';
-import { generateRankingImage } from './rankingImage.js';
+import { generateRankingImage, generateProfileImage } from './rankingImage.js';
 import { formatGlobalUsersText, formatGlobalGroupsText, formatMyTopGroupsText } from './globalLogic.js';
 import {
   RULE_5_MESSAGE_GAP_MS,
