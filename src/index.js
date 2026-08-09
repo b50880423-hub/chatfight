@@ -724,7 +724,6 @@ function cleanUnicode(text) {
 }
 
 async function sendPhotoThenText(ctx, imageBuffer, text, options = {}) {
-async function sendPhotoThenText(ctx, imageBuffer, text, options = {}) {
   // Callback buttons edit/delete the old bot message. Remove it first so the
   // refreshed result is sent as one single photo message.
   if (ctx.callbackQuery?.message) {
