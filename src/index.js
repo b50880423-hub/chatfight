@@ -8,7 +8,6 @@ import {
   getISTDayKey,
 } from './rankingLogic.js';
 import { formatProfileText } from './profileLogic.js';
-import { generateRankingImage, generateProfileImage } from './rankingImage.js';
 import { formatGlobalUsersText, formatGlobalGroupsText, formatMyTopGroupsText } from './globalLogic.js';
 import {
   RULE_5_MESSAGE_GAP_MS,
@@ -24,17 +23,6 @@ function escapeHtml(value = '') {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
-}
-
-function cleanUnicode(value = '') {
-  // Remove only invalid/unpaired UTF-16 surrogates. Keep valid Unicode
-  // surrogate pairs used by emoji and many fancy Unicode name characters.
-  return Array.from(String(value ?? ''))
-    .filter((char) => {
-      const codePoint = char.codePointAt(0);
-      return codePoint < 0xD800 || codePoint > 0xDFFF;
-    })
-    .join('');
 }
 
 function normalizeDisplayName(value = '') {
@@ -667,26 +655,38 @@ async function sendLoggerModerationMessage(message, replyMarkup) {
 }
 
 async function sendWelcomeMessage(ctx, targetChatId = null) {
-  const keyboardButtons = [
-    [{ text: '📊 Rankings', callback_data: 'welcome:rankings' }, { text: '👤 Profile', callback_data: 'welcome:profile' }],
-  ];
+  const supportGroupLink = process.env.SUPPORT_GROUP_LINK || publicGroupLink;
 
-  if (publicGroupLink) {
-    keyboardButtons.push([{ text: '🚀 Join Public Group', url: publicGroupLink }]);
-  }
+  const keyboard = supportGroupLink
+    ? {
+        inline_keyboard: [
+          [{ text: '💬 Support Group', url: supportGroupLink }],
+        ],
+      }
+    : undefined;
 
-  const keyboard = {
-    inline_keyboard: keyboardButtons,
+  const message = `📊 <b>CHATFIGHT</b>
+
+Your ultimate <b>chat activity &amp; statistics bot</b>.
+
+💬 Track messages
+🏆 Compete on leaderboards
+📈 Watch your activity grow
+👥 Discover your group's top chatters
+
+<b>Turn every message into a statistic.</b>`;
+
+  const options = {
+    parse_mode: 'HTML',
+    ...(keyboard ? { reply_markup: keyboard } : {}),
   };
 
-  const message = 'Welcome to ChatFight! Use the buttons below to explore the bot.';
-
   if (targetChatId) {
-    await ctx.telegram.sendMessage(targetChatId, message, { reply_markup: keyboard });
+    await ctx.telegram.sendMessage(targetChatId, message, options);
     return;
   }
 
-  await ctx.reply(message, { reply_markup: keyboard });
+  await ctx.reply(message, options);
 }
 
 bot.start(async (ctx) => {
@@ -704,51 +704,19 @@ bot.start(async (ctx) => {
   await sendWelcomeMessage(ctx);
 });
 
-function buildRankingKeyboard(prefix = 'rankings', selectedMode = 'today') {
-  const mark = (mode) => mode === selectedMode ? ' ✅' : '';
+function buildRankingKeyboard(prefix = 'rankings') {
   return {
     inline_keyboard: [
-      [{ text: `📈 Total${mark('total')}`, callback_data: `${prefix}:total` }],
+      [{ text: '📈 Total', callback_data: `${prefix}:total` }],
       [
-        { text: `📅 Today${mark('today')}`, callback_data: `${prefix}:today` },
-        { text: `🗓️ Weekly${mark('weekly')}`, callback_data: `${prefix}:weekly` },
+        { text: '📅 Today', callback_data: `${prefix}:today` },
+        { text: '🗓️ Weekly', callback_data: `${prefix}:weekly` },
       ],
     ],
   };
 }
 
-async function sendPhotoThenText(ctx, imageBuffer, text, options = {}) {
-  // Callback buttons edit/delete the old bot message. Remove it first so the
-  // refreshed result is sent as one single photo message.
-  if (ctx.callbackQuery?.message) {
-    try {
-      await ctx.deleteMessage();
-    } catch (_) {}
-  }
-
-  // Photo + leaderboard/profile text + buttons are ONE Telegram message.
-  // The blank lines create the requested visual separation between the image
-  // and the text because the text is sent as the photo caption.
-  const cleanText = cleanUnicode(text);
-  const caption = `\n\n${cleanText}`;
-
-  if (caption.length > 1024) {
-    console.warn(`[Ranking] Photo caption is ${caption.length} characters; Telegram limit is 1024.`);
-  }
-
-  return ctx.replyWithPhoto(
-    { source: imageBuffer },
-    {
-      caption,
-      parse_mode: 'HTML',
-      ...options,
-    },
-  );
-}
-
 async function sendOrEditMessage(ctx, text, options = {}) {
-  text = cleanUnicode(text);
-  
   if (ctx.callbackQuery?.message) {
     try {
       return await ctx.editMessageText(text, {
@@ -833,13 +801,7 @@ async function sendRankingReply(ctx, mode = 'today') {
   }
 
   const message = formatRankingText(topUsers, totalValue, mode, contextName);
-  const metricKey = mode === 'total' ? 'messageCount' : mode === 'weekly' ? 'weeklyMessageCount' : 'dailyMessageCount';
-  const imageBuffer = await generateRankingImage(topUsers, {
-    title: 'CHATFIGHT RANKINGS',
-    subtitle: contextName,
-    valueKey: metricKey,
-  });
-  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard('rankings', mode) });
+  await sendOrEditMessage(ctx, message, { reply_markup: buildRankingKeyboard() });
 }
 
 bot.command('leaderboard', async (ctx) => {
@@ -851,15 +813,9 @@ bot.command('leaderboard', async (ctx) => {
   if (await maybeRejectUser(ctx, groupId)) return;
   const database = await connectDb();
   const entries = await getMiniGameLeaderboard(database, groupId);
-  const message = formatMiniGameLeaderboard(entries, 'chat');
-  const imageBuffer = await generateRankingImage(entries, {
-    title: 'MINI-GAME LEADERBOARD',
-    subtitle: ctx.chat?.title || 'THIS CHAT',
-    nameKey: 'displayName',
-    valueKey: 'points',
-    valueSuffix: ' pts',
+  await sendOrEditMessage(ctx, formatMiniGameLeaderboard(entries, 'chat'), {
+    reply_markup: miniGameLeaderboardKeyboard(),
   });
-  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: miniGameLeaderboardKeyboard('chat') });
 });
 
 bot.command(['rankings', 'ranking'], async (ctx) => {
@@ -872,14 +828,7 @@ bot.command('topuser', async (ctx) => {
   const entries = await getGlobalUsers('today');
   const contextName = ctx.chat?.title || ctx.chat?.username || 'this chat';
   const message = formatGlobalUsersText(entries, 'today', contextName);
-  const imageBuffer = await generateRankingImage(entries, {
-    title: 'TOP USERS',
-    subtitle: 'GLOBAL • TODAY',
-    nameKey: 'displayName',
-    valueKey: 'value',
-    truncateName: false,
-  });
-  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard('topuser', 'today') });
+  await sendOrEditMessage(ctx, message, { reply_markup: buildRankingKeyboard('topuser') });
 });
 
 bot.command('topgroups', async (ctx) => {
@@ -887,14 +836,7 @@ bot.command('topgroups', async (ctx) => {
   const entries = await getGlobalGroups('today');
   const contextName = ctx.chat?.title || ctx.chat?.username || 'this chat';
   const message = formatGlobalGroupsText(entries, 'today', contextName);
-  const imageBuffer = await generateRankingImage(entries, {
-    title: 'TOP GROUPS',
-    subtitle: 'GLOBAL • TODAY',
-    nameKey: 'groupName',
-    valueKey: 'value',
-    truncateName: false,
-  });
-  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard('topgroups', 'today') });
+  await sendOrEditMessage(ctx, message, { reply_markup: buildRankingKeyboard('topgroups') });
 });
 
 bot.command('mytop', async (ctx) => {
@@ -959,8 +901,7 @@ bot.command('profile', async (ctx) => {
 
   const contextName = ctx.chat?.title || ctx.chat?.username || 'this chat';
   const message = formatProfileText(profileData.profile, profileData.rank, profileData.totalUsers, contextName);
-  const imageBuffer = await generateProfileImage(profileData.profile, profileData.rank, profileData.totalUsers, contextName);
-  await sendPhotoThenText(ctx, imageBuffer, message);
+  await sendOrEditMessage(ctx, message);
 });
 
 bot.command('banuser', async (ctx) => {
@@ -1071,8 +1012,7 @@ bot.action('welcome:profile', async (ctx) => {
 
   const contextName = ctx.chat?.title || ctx.chat?.username || 'this chat';
   const message = formatProfileText(profileData.profile, profileData.rank, profileData.totalUsers, contextName);
-  const imageBuffer = await generateProfileImage(profileData.profile, profileData.rank, profileData.totalUsers, contextName);
-  await sendPhotoThenText(ctx, imageBuffer, message);
+  await sendOrEditMessage(ctx, message);
 });
 
 bot.action(/minigame_lb:(chat|global)/, async (ctx) => {
@@ -1083,15 +1023,9 @@ bot.action(/minigame_lb:(chat|global)/, async (ctx) => {
   const scope = ctx.match[1];
   const database = await connectDb();
   const entries = await getMiniGameLeaderboard(database, scope === 'chat' ? groupId : null);
-  const message = formatMiniGameLeaderboard(entries, scope);
-  const imageBuffer = await generateRankingImage(entries, {
-    title: scope === 'global' ? 'GLOBAL MINI-GAME LEADERBOARD' : 'MINI-GAME LEADERBOARD',
-    subtitle: scope === 'global' ? 'GLOBAL' : (ctx.chat?.title || 'THIS CHAT'),
-    nameKey: 'displayName',
-    valueKey: 'points',
-    valueSuffix: ' pts',
+  await sendOrEditMessage(ctx, formatMiniGameLeaderboard(entries, scope), {
+    reply_markup: miniGameLeaderboardKeyboard(),
   });
-  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: miniGameLeaderboardKeyboard(scope) });
 });
 
 bot.action(/rankings:(today|total|weekly)/, async (ctx) => {
@@ -1108,14 +1042,7 @@ bot.action(/topuser:(today|total|weekly)/, async (ctx) => {
   const contextName = ctx.chat?.title || ctx.chat?.username || 'this chat';
   const entries = await getGlobalUsers(mode);
   const message = formatGlobalUsersText(entries, mode, contextName);
-  const imageBuffer = await generateRankingImage(entries, {
-    title: 'TOP USERS',
-    subtitle: `GLOBAL • ${mode === 'total' ? 'ALL TIME' : mode === 'weekly' ? 'THIS WEEK' : 'TODAY'}`,
-    nameKey: 'displayName',
-    valueKey: 'value',
-    truncateName: false,
-  });
-  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard('topuser', mode) });
+  await sendOrEditMessage(ctx, message, { reply_markup: buildRankingKeyboard('topuser') });
 });
 
 bot.action(/topgroups:(today|total|weekly)/, async (ctx) => {
@@ -1125,14 +1052,7 @@ bot.action(/topgroups:(today|total|weekly)/, async (ctx) => {
   const contextName = ctx.chat?.title || ctx.chat?.username || 'this chat';
   const entries = await getGlobalGroups(mode);
   const message = formatGlobalGroupsText(entries, mode, contextName);
-  const imageBuffer = await generateRankingImage(entries, {
-    title: 'TOP GROUPS',
-    subtitle: `GLOBAL • ${mode === 'total' ? 'ALL TIME' : mode === 'weekly' ? 'THIS WEEK' : 'TODAY'}`,
-    nameKey: 'groupName',
-    valueKey: 'value',
-    truncateName: false,
-  });
-  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard('topgroups', mode) });
+  await sendOrEditMessage(ctx, message, { reply_markup: buildRankingKeyboard('topgroups') });
 });
 
 bot.on('my_chat_member', async (ctx) => {
