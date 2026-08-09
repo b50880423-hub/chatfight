@@ -19,7 +19,7 @@ import {
   getISTDayKey,
 } from './rankingLogic.js';
 import { formatProfileText } from './profileLogic.js';
-import { generateRankingImage, generateProfileImage } from './rankingImage.js';
+import { generateRankingImage } from './rankingImage.js';
 import { formatGlobalUsersText, formatGlobalGroupsText, formatMyTopGroupsText } from './globalLogic.js';
 import {
   RULE_5_MESSAGE_GAP_MS,
@@ -111,9 +111,6 @@ async function ensureIndexes() {
 
   const botGroupAddLogs = database.collection('bot_group_add_logs');
   await botGroupAddLogs.createIndex({ groupId: 1 }, { unique: true });
-
-  const rankingMessages = database.collection('ranking_messages');
-  await rankingMessages.createIndex({ chatId: 1 }, { unique: true });
 
   await ensureMiniGameIndexes(database);
 }
@@ -786,13 +783,15 @@ bot.start(async (ctx) => {
   await sendWelcomeMessage(ctx);
 });
 
-function buildRankingKeyboard(prefix = 'rankings') {
+function buildRankingKeyboard(prefix = 'rankings', selectedMode = null) {
+  const mark = (mode, label) => selectedMode === mode ? `✅ ${label}` : label;
+
   return {
     inline_keyboard: [
-      [{ text: '📈 Total', callback_data: `${prefix}:total` }],
+      [{ text: mark('total', '📈 Total'), callback_data: `${prefix}:total` }],
       [
-        { text: '📅 Today', callback_data: `${prefix}:today` },
-        { text: '🗓️ Weekly', callback_data: `${prefix}:weekly` },
+        { text: mark('today', '📅 Today'), callback_data: `${prefix}:today` },
+        { text: mark('weekly', '🗓️ Weekly'), callback_data: `${prefix}:weekly` },
       ],
     ],
   };
@@ -908,39 +907,45 @@ async function sendRankingReply(ctx, mode = 'today') {
 
   const database = await connectDb();
   const rankingMessages = database.collection('ranking_messages');
-
-  // Keep only one active rankings message per chat. This prevents repeated
-  // /rankings calls and ranking button clicks from filling the group with
-  // duplicate ranking posts.
   const previous = await rankingMessages.findOne({ chatId: groupId });
-  if (previous?.messageId) {
-    try {
-      await ctx.telegram.deleteMessage(groupId, Number(previous.messageId));
-    } catch (error) {
-      const description = error?.response?.description || error?.description || '';
-      // Ignore "message to delete not found" / already deleted messages.
-      if (!description.includes('message to delete not found')) {
-        console.warn(`[Rankings] Could not delete previous ranking message ${previous.messageId}:`, description);
-      }
-    }
-  }
+
+  const keyboard = buildRankingKeyboard('rankings', mode);
 
   if (!topUsers.length) {
-    const sent = await ctx.reply(
-      'No activity yet in this group.',
-      { parse_mode: 'HTML', reply_markup: buildRankingKeyboard() },
-    );
+    const text = 'No activity yet in this group.';
+    const existingMessageId = previous?.messageId;
+
+    if (existingMessageId) {
+      try {
+        if (ctx.callbackQuery?.message) {
+          await ctx.editMessageText(text, {
+            parse_mode: 'HTML',
+            reply_markup: keyboard,
+          });
+        } else {
+          await ctx.telegram.editMessageText(
+            groupId,
+            Number(existingMessageId),
+            undefined,
+            text,
+            { parse_mode: 'HTML', reply_markup: keyboard },
+          );
+        }
+        return;
+      } catch (error) {
+        console.warn('[Rankings] Could not edit existing ranking message:', error?.response?.description || error?.message);
+      }
+    }
+
+    const sent = await ctx.reply(text, {
+      parse_mode: 'HTML',
+      reply_markup: keyboard,
+    });
 
     if (sent?.message_id) {
       await rankingMessages.updateOne(
         { chatId: groupId },
-        {
-          $set: {
-            chatId: groupId,
-            messageId: String(sent.message_id),
-            updatedAt: new Date(),
-          },
-        },
+        { $set: { chatId: groupId, messageId: String(sent.message_id), updatedAt: new Date() } },
         { upsert: true },
       );
     }
@@ -961,12 +966,45 @@ async function sendRankingReply(ctx, mode = 'today') {
     valueKey: metricKey,
   });
 
+  const media = {
+    type: 'photo',
+    media: Input.fromBuffer(imageBuffer),
+    caption: `\n\n${cleanUnicode(message)}`,
+    parse_mode: 'HTML',
+  };
+
+  // Keep the same Telegram message and simply edit its photo/caption/buttons.
+  // This also means the selected tab can show a persistent tick mark.
+  if (previous?.messageId) {
+    try {
+      if (ctx.callbackQuery?.message) {
+        await ctx.editMessageMedia(media, { reply_markup: keyboard });
+      } else {
+        await ctx.telegram.editMessageMedia(
+          groupId,
+          Number(previous.messageId),
+          undefined,
+          media,
+          { reply_markup: keyboard },
+        );
+      }
+      await rankingMessages.updateOne(
+        { chatId: groupId },
+        { $set: { updatedAt: new Date() } },
+        { upsert: true },
+      );
+      return;
+    } catch (error) {
+      console.warn('[Rankings] Could not edit existing ranking message; sending a new one:', error?.response?.description || error?.message);
+    }
+  }
+
   const sent = await ctx.replyWithPhoto(
     { source: imageBuffer },
     {
       caption: `\n\n${cleanUnicode(message)}`,
       parse_mode: 'HTML',
-      reply_markup: buildRankingKeyboard(),
+      reply_markup: keyboard,
     },
   );
 
