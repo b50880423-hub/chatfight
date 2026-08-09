@@ -47,6 +47,7 @@ import {
   formatMiniGameLeaderboard,
   miniGameLeaderboardKeyboard,
 } from './miniGameLogic.js';
+import { generateRankingImage } from './rankingImage.js';
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const mongoUri = process.env.MONGODB_URI || (process.env.NODE_ENV === 'development' ? 'mongodb://127.0.0.1:27017' : null);
