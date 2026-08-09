@@ -830,7 +830,6 @@ async function sendRankingReply(ctx, mode = 'today') {
   }
 
   const message = formatRankingText(topUsers, totalValue, mode, contextName);
-  const message = formatRankingText(topUsers, totalValue, mode, contextName);
   const metricKey = mode === 'total' ? 'messageCount' : mode === 'weekly' ? 'weeklyMessageCount' : 'dailyMessageCount';
   const imageBuffer = await generateRankingImage(topUsers, {
     title: 'CHATFIGHT RANKINGS',
