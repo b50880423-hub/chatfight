@@ -717,6 +717,13 @@ function buildRankingKeyboard(prefix = 'rankings') {
   };
 }
 
+function cleanUnicode(text) {
+  return String(text ?? '')
+    .replace(/[\uD800-\uDFFF]/g, '')
+    .normalize('NFC');
+}
+
+async function sendPhotoThenText(ctx, imageBuffer, text, options = {}) {
 async function sendPhotoThenText(ctx, imageBuffer, text, options = {}) {
   // Callback buttons edit/delete the old bot message. Remove it first so the
   // refreshed result is sent as one single photo message.
