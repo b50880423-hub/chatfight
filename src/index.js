@@ -1,4 +1,15 @@
 import 'dotenv/config';
+
+// Remove invalid/unpaired UTF-16 surrogate code units before sending Telegram text.
+// This prevents malformed Unicode in user display names from breaking ranking captions.
+function cleanUnicode(value = '') {
+  return Array.from(String(value || ''))
+    .filter((char) => {
+      const codePoint = char.codePointAt(0);
+      return codePoint < 0xD800 || codePoint > 0xDFFF;
+    })
+    .join('');
+}
 import { Telegraf, Input } from 'telegraf';
 import { MongoClient } from 'mongodb';
 import {
