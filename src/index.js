@@ -8,6 +8,7 @@ import {
   getISTDayKey,
 } from './rankingLogic.js';
 import { formatProfileText } from './profileLogic.js';
+import { generateRankingImage, generateProfileImage } from './rankingImage.js';
 import { formatGlobalUsersText, formatGlobalGroupsText, formatMyTopGroupsText } from './globalLogic.js';
 import {
   RULE_5_MESSAGE_GAP_MS,
@@ -23,6 +24,17 @@ function escapeHtml(value = '') {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+function cleanUnicode(value = '') {
+  // Remove only invalid/unpaired UTF-16 surrogates. Keep valid Unicode
+  // surrogate pairs used by emoji and many fancy Unicode name characters.
+  return Array.from(String(value ?? ''))
+    .filter((char) => {
+      const codePoint = char.codePointAt(0);
+      return codePoint < 0xD800 || codePoint > 0xDFFF;
+    })
+    .join('');
 }
 
 function normalizeDisplayName(value = '') {
@@ -47,7 +59,6 @@ import {
   formatMiniGameLeaderboard,
   miniGameLeaderboardKeyboard,
 } from './miniGameLogic.js';
-import { generateRankingImage } from './rankingImage.js';
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const mongoUri = process.env.MONGODB_URI || (process.env.NODE_ENV === 'development' ? 'mongodb://127.0.0.1:27017' : null);
@@ -656,38 +667,26 @@ async function sendLoggerModerationMessage(message, replyMarkup) {
 }
 
 async function sendWelcomeMessage(ctx, targetChatId = null) {
-  const supportGroupLink = process.env.SUPPORT_GROUP_LINK || publicGroupLink;
+  const keyboardButtons = [
+    [{ text: '📊 Rankings', callback_data: 'welcome:rankings' }, { text: '👤 Profile', callback_data: 'welcome:profile' }],
+  ];
 
-  const keyboard = supportGroupLink
-    ? {
-        inline_keyboard: [
-          [{ text: '💬 Support Group', url: supportGroupLink }],
-        ],
-      }
-    : undefined;
+  if (publicGroupLink) {
+    keyboardButtons.push([{ text: '🚀 Join Public Group', url: publicGroupLink }]);
+  }
 
-  const message = `📊 <b>CHATFIGHT</b>
-
-Your ultimate <b>chat activity &amp; statistics bot</b>.
-
-💬 Track messages
-🏆 Compete on leaderboards
-📈 Watch your activity grow
-👥 Discover your group's top chatters
-
-<b>Turn every message into a statistic.</b>`;
-
-  const options = {
-    parse_mode: 'HTML',
-    ...(keyboard ? { reply_markup: keyboard } : {}),
+  const keyboard = {
+    inline_keyboard: keyboardButtons,
   };
 
+  const message = 'Welcome to ChatFight! Use the buttons below to explore the bot.';
+
   if (targetChatId) {
-    await ctx.telegram.sendMessage(targetChatId, message, options);
+    await ctx.telegram.sendMessage(targetChatId, message, { reply_markup: keyboard });
     return;
   }
 
-  await ctx.reply(message, options);
+  await ctx.reply(message, { reply_markup: keyboard });
 }
 
 bot.start(async (ctx) => {
@@ -705,22 +704,17 @@ bot.start(async (ctx) => {
   await sendWelcomeMessage(ctx);
 });
 
-function buildRankingKeyboard(prefix = 'rankings') {
+function buildRankingKeyboard(prefix = 'rankings', selectedMode = 'today') {
+  const mark = (mode) => mode === selectedMode ? ' ✅' : '';
   return {
     inline_keyboard: [
-      [{ text: '📈 Total', callback_data: `${prefix}:total` }],
+      [{ text: `📈 Total${mark('total')}`, callback_data: `${prefix}:total` }],
       [
-        { text: '📅 Today', callback_data: `${prefix}:today` },
-        { text: '🗓️ Weekly', callback_data: `${prefix}:weekly` },
+        { text: `📅 Today${mark('today')}`, callback_data: `${prefix}:today` },
+        { text: `🗓️ Weekly${mark('weekly')}`, callback_data: `${prefix}:weekly` },
       ],
     ],
   };
-}
-
-function cleanUnicode(text) {
-  return String(text ?? '')
-    .replace(/[\uD800-\uDFFF]/g, '')
-    .normalize('NFC');
 }
 
 async function sendPhotoThenText(ctx, imageBuffer, text, options = {}) {
@@ -753,6 +747,8 @@ async function sendPhotoThenText(ctx, imageBuffer, text, options = {}) {
 }
 
 async function sendOrEditMessage(ctx, text, options = {}) {
+  text = cleanUnicode(text);
+  
   if (ctx.callbackQuery?.message) {
     try {
       return await ctx.editMessageText(text, {
@@ -840,10 +836,10 @@ async function sendRankingReply(ctx, mode = 'today') {
   const metricKey = mode === 'total' ? 'messageCount' : mode === 'weekly' ? 'weeklyMessageCount' : 'dailyMessageCount';
   const imageBuffer = await generateRankingImage(topUsers, {
     title: 'CHATFIGHT RANKINGS',
-    subtitle: `${contextName} â€¢ ${mode === 'total' ? 'ALL TIME' : mode === 'weekly' ? 'THIS WEEK' : 'TODAY'}`,
+    subtitle: contextName,
     valueKey: metricKey,
   });
-  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard() });
+  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard('rankings', mode) });
 }
 
 bot.command('leaderboard', async (ctx) => {
@@ -863,7 +859,7 @@ bot.command('leaderboard', async (ctx) => {
     valueKey: 'points',
     valueSuffix: ' pts',
   });
-  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: miniGameLeaderboardKeyboard() });
+  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: miniGameLeaderboardKeyboard('chat') });
 });
 
 bot.command(['rankings', 'ranking'], async (ctx) => {
@@ -878,11 +874,12 @@ bot.command('topuser', async (ctx) => {
   const message = formatGlobalUsersText(entries, 'today', contextName);
   const imageBuffer = await generateRankingImage(entries, {
     title: 'TOP USERS',
-    subtitle: 'GLOBAL â€¢ TODAY',
+    subtitle: 'GLOBAL • TODAY',
     nameKey: 'displayName',
     valueKey: 'value',
+    truncateName: false,
   });
-  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard('topuser') });
+  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard('topuser', 'today') });
 });
 
 bot.command('topgroups', async (ctx) => {
@@ -892,11 +889,12 @@ bot.command('topgroups', async (ctx) => {
   const message = formatGlobalGroupsText(entries, 'today', contextName);
   const imageBuffer = await generateRankingImage(entries, {
     title: 'TOP GROUPS',
-    subtitle: 'GLOBAL â€¢ TODAY',
+    subtitle: 'GLOBAL • TODAY',
     nameKey: 'groupName',
     valueKey: 'value',
+    truncateName: false,
   });
-  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard('topgroups') });
+  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard('topgroups', 'today') });
 });
 
 bot.command('mytop', async (ctx) => {
@@ -1093,7 +1091,7 @@ bot.action(/minigame_lb:(chat|global)/, async (ctx) => {
     valueKey: 'points',
     valueSuffix: ' pts',
   });
-  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: miniGameLeaderboardKeyboard() });
+  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: miniGameLeaderboardKeyboard(scope) });
 });
 
 bot.action(/rankings:(today|total|weekly)/, async (ctx) => {
@@ -1112,11 +1110,12 @@ bot.action(/topuser:(today|total|weekly)/, async (ctx) => {
   const message = formatGlobalUsersText(entries, mode, contextName);
   const imageBuffer = await generateRankingImage(entries, {
     title: 'TOP USERS',
-    subtitle: `GLOBAL â€¢ ${mode === 'total' ? 'ALL TIME' : mode === 'weekly' ? 'THIS WEEK' : 'TODAY'}`,
+    subtitle: `GLOBAL • ${mode === 'total' ? 'ALL TIME' : mode === 'weekly' ? 'THIS WEEK' : 'TODAY'}`,
     nameKey: 'displayName',
     valueKey: 'value',
+    truncateName: false,
   });
-  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard('topuser') });
+  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard('topuser', mode) });
 });
 
 bot.action(/topgroups:(today|total|weekly)/, async (ctx) => {
@@ -1128,11 +1127,12 @@ bot.action(/topgroups:(today|total|weekly)/, async (ctx) => {
   const message = formatGlobalGroupsText(entries, mode, contextName);
   const imageBuffer = await generateRankingImage(entries, {
     title: 'TOP GROUPS',
-    subtitle: `GLOBAL â€¢ ${mode === 'total' ? 'ALL TIME' : mode === 'weekly' ? 'THIS WEEK' : 'TODAY'}`,
+    subtitle: `GLOBAL • ${mode === 'total' ? 'ALL TIME' : mode === 'weekly' ? 'THIS WEEK' : 'TODAY'}`,
     nameKey: 'groupName',
     valueKey: 'value',
+    truncateName: false,
   });
-  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard('topgroups') });
+  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard('topgroups', mode) });
 });
 
 bot.on('my_chat_member', async (ctx) => {
