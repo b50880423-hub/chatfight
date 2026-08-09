@@ -78,6 +78,7 @@ if (!mongoUri) {
 }
 
 const bot = new Telegraf(token);
+let botUsername = '';
 const client = new MongoClient(mongoUri);
 let db;
 
@@ -102,6 +103,15 @@ async function ensureIndexes() {
 
   const groupStats = database.collection('group_stats');
   await groupStats.createIndex({ groupId: 1 }, { unique: true });
+
+  // Logger de-duplication: a user is logged only on their first /start,
+  // and a group is logged only the first time the bot is added there.
+  const botStartLogs = database.collection('bot_start_logs');
+  await botStartLogs.createIndex({ userId: 1 }, { unique: true });
+
+  const botGroupAddLogs = database.collection('bot_group_add_logs');
+  await botGroupAddLogs.createIndex({ groupId: 1 }, { unique: true });
+
   await ensureMiniGameIndexes(database);
 }
 
@@ -654,6 +664,44 @@ function isOwner(userId) {
   return ownerId && String(userId) === String(ownerId);
 }
 
+async function logBotStartOnce(payload) {
+  const database = await connectDb();
+  const logs = database.collection('bot_start_logs');
+
+  try {
+    await logs.insertOne({
+      userId: String(payload.userId),
+      userName: payload.userName || 'unknown',
+      createdAt: new Date(),
+    });
+  } catch (error) {
+    if (error?.code === 11000) return false;
+    throw error;
+  }
+
+  await sendLoggerMessage(buildLoggerMessage('bot-started', payload));
+  return true;
+}
+
+async function logBotAddedOnce(payload) {
+  const database = await connectDb();
+  const logs = database.collection('bot_group_add_logs');
+
+  try {
+    await logs.insertOne({
+      groupId: String(payload.groupId),
+      groupName: payload.groupName || 'unknown',
+      createdAt: new Date(),
+    });
+  } catch (error) {
+    if (error?.code === 11000) return false;
+    throw error;
+  }
+
+  await sendLoggerMessage(buildLoggerMessage('group-added', payload));
+  return true;
+}
+
 async function sendLoggerMessage(message) {
   if (!loggerChatId) return;
   try {
@@ -678,12 +726,17 @@ async function sendLoggerModerationMessage(message, replyMarkup) {
 async function sendWelcomeMessage(ctx, targetChatId = null) {
   const supportGroupLink = process.env.SUPPORT_GROUP_LINK || publicGroupLink;
 
-  const keyboard = supportGroupLink
-    ? {
-        inline_keyboard: [
-          [{ text: '💬 Support Group', url: supportGroupLink }],
-        ],
-      }
+  const rows = [];
+  if (supportGroupLink) {
+    rows.push([{ text: '💬 Support Group', url: supportGroupLink }]);
+  }
+
+  if (botUsername) {
+    rows.push([{ text: '➕ Add Me', url: `https://t.me/${botUsername}?startgroup=true` }]);
+  }
+
+  const keyboard = rows.length
+    ? { inline_keyboard: rows }
     : undefined;
 
   const message = `📊 <b>CHATFIGHT</b>
@@ -715,8 +768,13 @@ bot.start(async (ctx) => {
     userId: ctx.from?.id,
     userName: ctx.from?.username || ctx.from?.first_name || 'unknown',
   };
-  const message = buildLoggerMessage('bot-started', payload);
-  await sendLoggerMessage(message);
+
+  // Log each user only once, even if they press /start repeatedly.
+  try {
+    await logBotStartOnce(payload);
+  } catch (error) {
+    console.error('[Logger] Failed to record bot start:', error);
+  }
 
   if (ctx.chat?.type === 'private' && await maybeRejectUser(ctx)) {
     return;
@@ -1171,8 +1229,12 @@ bot.on('my_chat_member', async (ctx) => {
       groupId: member.chat.id,
       groupLink: member.chat.username ? `https://t.me/${member.chat.username}` : 'n/a',
     };
-    const message = buildLoggerMessage('group-added', payload);
-    await sendLoggerMessage(message);
+    try {
+      await logBotAddedOnce(payload);
+    } catch (error) {
+      console.error('[Logger] Failed to record group addition:', error);
+    }
+
     const database = await connectDb();
     await registerMiniGameGroup(
       database,
@@ -1290,6 +1352,16 @@ async function start() {
   setInterval(runMiniGames, 15000);
 
   console.log('[MiniGame] Scheduler started');
+
+  // Cache the bot username so the /start welcome message can include
+  // an "Add Me" button that opens Telegram's group picker.
+  try {
+    const me = await bot.telegram.getMe();
+    botUsername = me.username || '';
+    console.log(`[Bot] Username loaded: @${botUsername || 'unknown'}`);
+  } catch (error) {
+    console.error('[Bot] Failed to load bot username:', error);
+  }
 
   await bot.launch();
 
