@@ -78,6 +78,24 @@ if (!mongoUri) {
 }
 
 const bot = new Telegraf(token);
+
+// Telegram callback queries expire quickly. Answering an old callback can
+// throw a 400 error and otherwise make the update look like an unhandled
+// bot failure, so all callback handlers use this safe wrapper.
+async function safeAnswerCbQuery(ctx, text) {
+  try {
+    return await ctx.answerCbQuery(text);
+  } catch (error) {
+    const description = error?.response?.description || error?.message || '';
+    if (String(description).toLowerCase().includes('query is too old') ||
+        String(description).toLowerCase().includes('query id is invalid') ||
+        String(description).toLowerCase().includes('response timeout expired')) {
+      console.warn('[Callback] Expired/invalid callback query ignored:', description);
+      return null;
+    }
+    throw error;
+  }
+}
 const client = new MongoClient(mongoUri);
 let db;
 
@@ -762,7 +780,7 @@ async function sendOrEditMessage(ctx, text, options = {}) {
       ) {
         // Just answer the callback instead of treating it as a bot error.
         try {
-          await ctx.answerCbQuery();
+          await safeAnswerCbQuery(ctx);
         } catch (_) {}
 
         return null;
@@ -1019,7 +1037,7 @@ bot.command('unbanuser', async (ctx) => {
 });
 
 bot.action(/banuser:(\d+):(1d|2d|3d|10d|20d|1m|3m|1y|perm|ignore)/, async (ctx) => {
-  await ctx.answerCbQuery();
+  await safeAnswerCbQuery(ctx);
   if (ctx.chat?.id?.toString() !== loggerChatId) {
     await ctx.reply('Ban controls are available only in the logger group.');
     return;
@@ -1044,13 +1062,13 @@ bot.action(/banuser:(\d+):(1d|2d|3d|10d|20d|1m|3m|1y|perm|ignore)/, async (ctx) 
 });
 
 bot.action('welcome:rankings', async (ctx) => {
-  await ctx.answerCbQuery();
+  await safeAnswerCbQuery(ctx);
   if (await maybeRejectUser(ctx, ctx.chat?.type === 'private' ? null : ctx.chat?.id?.toString())) return;
   await sendRankingReply(ctx, 'today');
 });
 
 bot.action('welcome:profile', async (ctx) => {
-  await ctx.answerCbQuery();
+  await safeAnswerCbQuery(ctx);
   if (await maybeRejectUser(ctx, ctx.chat?.type === 'private' ? null : ctx.chat?.id?.toString())) return;
   const groupId = ctx.chat.id.toString();
   const userId = ctx.from?.id?.toString();
@@ -1073,7 +1091,7 @@ bot.action('welcome:profile', async (ctx) => {
 });
 
 bot.action(/minigame_lb:(chat|global)/, async (ctx) => {
-  await ctx.answerCbQuery();
+  await safeAnswerCbQuery(ctx);
   const groupId = ctx.chat?.type === 'private' ? null : ctx.chat?.id?.toString();
   if (!groupId) return;
   if (await maybeRejectUser(ctx, groupId)) return;
@@ -1092,14 +1110,14 @@ bot.action(/minigame_lb:(chat|global)/, async (ctx) => {
 });
 
 bot.action(/rankings:(today|total|weekly)/, async (ctx) => {
-  await ctx.answerCbQuery();
+  await safeAnswerCbQuery(ctx);
   if (await maybeRejectUser(ctx, ctx.chat.id.toString())) return;
   const mode = ctx.match[1];
   await sendRankingReply(ctx, mode);
 });
 
 bot.action(/topuser:(today|total|weekly)/, async (ctx) => {
-  await ctx.answerCbQuery();
+  await safeAnswerCbQuery(ctx);
   if (await maybeRejectUser(ctx, ctx.chat.id.toString())) return;
   const mode = ctx.match[1];
   const contextName = ctx.chat?.title || ctx.chat?.username || 'this chat';
@@ -1115,7 +1133,7 @@ bot.action(/topuser:(today|total|weekly)/, async (ctx) => {
 });
 
 bot.action(/topgroups:(today|total|weekly)/, async (ctx) => {
-  await ctx.answerCbQuery();
+  await safeAnswerCbQuery(ctx);
   if (await maybeRejectUser(ctx, ctx.chat.id.toString())) return;
   const mode = ctx.match[1];
   const contextName = ctx.chat?.title || ctx.chat?.username || 'this chat';

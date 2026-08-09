@@ -135,6 +135,25 @@ export async function startDueMiniGames({ db, telegram, logger = console }) {
       });
     } catch (error) {
       const description = error?.response?.description || error?.message || error;
+      const descriptionText = String(description);
+
+      // If the bot is not allowed to send photos, keep the mini-game alive
+      // by sending the same round as text instead of retrying forever.
+      if (descriptionText.toLowerCase().includes('not enough rights to send photos')) {
+        try {
+          await telegram.sendMessage(claimed.groupId, caption, { parse_mode: 'HTML' });
+          await games.updateOne(
+            { _id: claimed._id },
+            { $set: { lastSendError: null } },
+          );
+          logger.warn?.(`Mini-game photo permission missing for ${claimed.groupId}; sent text fallback.`);
+          continue;
+        } catch (fallbackError) {
+          const fallbackDescription = fallbackError?.response?.description || fallbackError?.message || fallbackError;
+          logger.error?.(`Mini-game text fallback failed for ${claimed.groupId}; retrying in 60 seconds:`, fallbackDescription);
+        }
+      }
+
       logger.error?.(`Mini-game send failed for ${claimed.groupId}; retrying in 60 seconds:`, description);
       await games.updateOne(
         { _id: claimed._id },
