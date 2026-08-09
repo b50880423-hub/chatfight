@@ -8,7 +8,6 @@ import {
   getISTDayKey,
 } from './rankingLogic.js';
 import { formatProfileText } from './profileLogic.js';
-import { generateRankingImage, generateProfileImage } from './rankingImage.js';
 import { formatGlobalUsersText, formatGlobalGroupsText, formatMyTopGroupsText } from './globalLogic.js';
 import {
   RULE_5_MESSAGE_GAP_MS,
@@ -24,17 +23,6 @@ function escapeHtml(value = '') {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
-}
-
-function cleanUnicode(value = '') {
-  // Remove only invalid/unpaired UTF-16 surrogates. Keep valid Unicode
-  // surrogate pairs used by emoji and many fancy Unicode name characters.
-  return Array.from(String(value ?? ''))
-    .filter((char) => {
-      const codePoint = char.codePointAt(0);
-      return codePoint < 0xD800 || codePoint > 0xDFFF;
-    })
-    .join('');
 }
 
 function normalizeDisplayName(value = '') {
@@ -224,11 +212,38 @@ function buildBanMessage(displayName, banUntil, banReason) {
   ].join('\n');
 }
 
+async function safeAnswerCbQuery(ctx, ...args) {
+  try {
+    return await ctx.answerCbQuery(...args);
+  } catch (error) {
+    const message = error?.description || error?.message || '';
+    if (
+      !message.includes('query is too old') &&
+      !message.includes('query ID is invalid') &&
+      !message.includes('query is already answered')
+    ) {
+      console.error('[Callback] Failed to answer callback query:', message || error);
+    }
+    return false;
+  }
+}
+
 async function sendUserNotification(userId, text) {
   try {
     await bot.telegram.sendMessage(userId, text, { parse_mode: 'HTML' });
+    return true;
   } catch (error) {
-    console.error('Failed to notify user', userId, error.message || error);
+    const message = error?.description || error?.message || String(error);
+
+    // Telegram does not allow bots to start a private chat with a user
+    // who has never started/interacted with the bot.
+    if (message.includes("bot can't initiate conversation")) {
+      console.log(`[Notify] User ${userId} has not started the bot; notification skipped.`);
+      return false;
+    }
+
+    console.error('Failed to notify user', userId, message);
+    return false;
   }
 }
 
@@ -667,26 +682,38 @@ async function sendLoggerModerationMessage(message, replyMarkup) {
 }
 
 async function sendWelcomeMessage(ctx, targetChatId = null) {
-  const keyboardButtons = [
-    [{ text: '📊 Rankings', callback_data: 'welcome:rankings' }, { text: '👤 Profile', callback_data: 'welcome:profile' }],
-  ];
+  const supportGroupLink = process.env.SUPPORT_GROUP_LINK || publicGroupLink;
 
-  if (publicGroupLink) {
-    keyboardButtons.push([{ text: '🚀 Join Public Group', url: publicGroupLink }]);
-  }
+  const keyboard = supportGroupLink
+    ? {
+        inline_keyboard: [
+          [{ text: '💬 Support Group', url: supportGroupLink }],
+        ],
+      }
+    : undefined;
 
-  const keyboard = {
-    inline_keyboard: keyboardButtons,
+  const message = `📊 <b>CHATFIGHT</b>
+
+Your ultimate <b>chat activity &amp; statistics bot</b>.
+
+💬 Track messages
+🏆 Compete on leaderboards
+📈 Watch your activity grow
+👥 Discover your group's top chatters
+
+<b>Turn every message into a statistic.</b>`;
+
+  const options = {
+    parse_mode: 'HTML',
+    ...(keyboard ? { reply_markup: keyboard } : {}),
   };
 
-  const message = 'Welcome to ChatFight! Use the buttons below to explore the bot.';
-
   if (targetChatId) {
-    await ctx.telegram.sendMessage(targetChatId, message, { reply_markup: keyboard });
+    await ctx.telegram.sendMessage(targetChatId, message, options);
     return;
   }
 
-  await ctx.reply(message, { reply_markup: keyboard });
+  await ctx.reply(message, options);
 }
 
 bot.start(async (ctx) => {
@@ -704,14 +731,13 @@ bot.start(async (ctx) => {
   await sendWelcomeMessage(ctx);
 });
 
-function buildRankingKeyboard(prefix = 'rankings', selectedMode = 'today') {
-  const mark = (mode) => mode === selectedMode ? ' ✅' : '';
+function buildRankingKeyboard(prefix = 'rankings') {
   return {
     inline_keyboard: [
-      [{ text: `📈 Total${mark('total')}`, callback_data: `${prefix}:total` }],
+      [{ text: '📈 Total', callback_data: `${prefix}:total` }],
       [
-        { text: `📅 Today${mark('today')}`, callback_data: `${prefix}:today` },
-        { text: `🗓️ Weekly${mark('weekly')}`, callback_data: `${prefix}:weekly` },
+        { text: '📅 Today', callback_data: `${prefix}:today` },
+        { text: '🗓️ Weekly', callback_data: `${prefix}:weekly` },
       ],
     ],
   };
@@ -747,8 +773,6 @@ async function sendPhotoThenText(ctx, imageBuffer, text, options = {}) {
 }
 
 async function sendOrEditMessage(ctx, text, options = {}) {
-  text = cleanUnicode(text);
-  
   if (ctx.callbackQuery?.message) {
     try {
       return await ctx.editMessageText(text, {
@@ -763,7 +787,7 @@ async function sendOrEditMessage(ctx, text, options = {}) {
       ) {
         // Just answer the callback instead of treating it as a bot error.
         try {
-          await ctx.answerCbQuery();
+          await safeAnswerCbQuery(ctx);
         } catch (_) {}
 
         return null;
@@ -836,10 +860,10 @@ async function sendRankingReply(ctx, mode = 'today') {
   const metricKey = mode === 'total' ? 'messageCount' : mode === 'weekly' ? 'weeklyMessageCount' : 'dailyMessageCount';
   const imageBuffer = await generateRankingImage(topUsers, {
     title: 'CHATFIGHT RANKINGS',
-    subtitle: contextName,
+    subtitle: `${contextName} â€¢ ${mode === 'total' ? 'ALL TIME' : mode === 'weekly' ? 'THIS WEEK' : 'TODAY'}`,
     valueKey: metricKey,
   });
-  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard('rankings', mode) });
+  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard() });
 }
 
 bot.command('leaderboard', async (ctx) => {
@@ -859,7 +883,7 @@ bot.command('leaderboard', async (ctx) => {
     valueKey: 'points',
     valueSuffix: ' pts',
   });
-  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: miniGameLeaderboardKeyboard('chat') });
+  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: miniGameLeaderboardKeyboard() });
 });
 
 bot.command(['rankings', 'ranking'], async (ctx) => {
@@ -874,12 +898,11 @@ bot.command('topuser', async (ctx) => {
   const message = formatGlobalUsersText(entries, 'today', contextName);
   const imageBuffer = await generateRankingImage(entries, {
     title: 'TOP USERS',
-    subtitle: 'GLOBAL • TODAY',
+    subtitle: 'GLOBAL â€¢ TODAY',
     nameKey: 'displayName',
     valueKey: 'value',
-    truncateName: false,
   });
-  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard('topuser', 'today') });
+  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard('topuser') });
 });
 
 bot.command('topgroups', async (ctx) => {
@@ -889,12 +912,11 @@ bot.command('topgroups', async (ctx) => {
   const message = formatGlobalGroupsText(entries, 'today', contextName);
   const imageBuffer = await generateRankingImage(entries, {
     title: 'TOP GROUPS',
-    subtitle: 'GLOBAL • TODAY',
+    subtitle: 'GLOBAL â€¢ TODAY',
     nameKey: 'groupName',
     valueKey: 'value',
-    truncateName: false,
   });
-  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard('topgroups', 'today') });
+  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard('topgroups') });
 });
 
 bot.command('mytop', async (ctx) => {
@@ -1022,7 +1044,7 @@ bot.command('unbanuser', async (ctx) => {
 });
 
 bot.action(/banuser:(\d+):(1d|2d|3d|10d|20d|1m|3m|1y|perm|ignore)/, async (ctx) => {
-  await ctx.answerCbQuery();
+  await safeAnswerCbQuery(ctx);
   if (ctx.chat?.id?.toString() !== loggerChatId) {
     await ctx.reply('Ban controls are available only in the logger group.');
     return;
@@ -1047,13 +1069,13 @@ bot.action(/banuser:(\d+):(1d|2d|3d|10d|20d|1m|3m|1y|perm|ignore)/, async (ctx) 
 });
 
 bot.action('welcome:rankings', async (ctx) => {
-  await ctx.answerCbQuery();
+  await safeAnswerCbQuery(ctx);
   if (await maybeRejectUser(ctx, ctx.chat?.type === 'private' ? null : ctx.chat?.id?.toString())) return;
   await sendRankingReply(ctx, 'today');
 });
 
 bot.action('welcome:profile', async (ctx) => {
-  await ctx.answerCbQuery();
+  await safeAnswerCbQuery(ctx);
   if (await maybeRejectUser(ctx, ctx.chat?.type === 'private' ? null : ctx.chat?.id?.toString())) return;
   const groupId = ctx.chat.id.toString();
   const userId = ctx.from?.id?.toString();
@@ -1076,7 +1098,7 @@ bot.action('welcome:profile', async (ctx) => {
 });
 
 bot.action(/minigame_lb:(chat|global)/, async (ctx) => {
-  await ctx.answerCbQuery();
+  await safeAnswerCbQuery(ctx);
   const groupId = ctx.chat?.type === 'private' ? null : ctx.chat?.id?.toString();
   if (!groupId) return;
   if (await maybeRejectUser(ctx, groupId)) return;
@@ -1091,18 +1113,18 @@ bot.action(/minigame_lb:(chat|global)/, async (ctx) => {
     valueKey: 'points',
     valueSuffix: ' pts',
   });
-  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: miniGameLeaderboardKeyboard(scope) });
+  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: miniGameLeaderboardKeyboard() });
 });
 
 bot.action(/rankings:(today|total|weekly)/, async (ctx) => {
-  await ctx.answerCbQuery();
+  await safeAnswerCbQuery(ctx);
   if (await maybeRejectUser(ctx, ctx.chat.id.toString())) return;
   const mode = ctx.match[1];
   await sendRankingReply(ctx, mode);
 });
 
 bot.action(/topuser:(today|total|weekly)/, async (ctx) => {
-  await ctx.answerCbQuery();
+  await safeAnswerCbQuery(ctx);
   if (await maybeRejectUser(ctx, ctx.chat.id.toString())) return;
   const mode = ctx.match[1];
   const contextName = ctx.chat?.title || ctx.chat?.username || 'this chat';
@@ -1110,16 +1132,15 @@ bot.action(/topuser:(today|total|weekly)/, async (ctx) => {
   const message = formatGlobalUsersText(entries, mode, contextName);
   const imageBuffer = await generateRankingImage(entries, {
     title: 'TOP USERS',
-    subtitle: `GLOBAL • ${mode === 'total' ? 'ALL TIME' : mode === 'weekly' ? 'THIS WEEK' : 'TODAY'}`,
+    subtitle: `GLOBAL â€¢ ${mode === 'total' ? 'ALL TIME' : mode === 'weekly' ? 'THIS WEEK' : 'TODAY'}`,
     nameKey: 'displayName',
     valueKey: 'value',
-    truncateName: false,
   });
-  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard('topuser', mode) });
+  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard('topuser') });
 });
 
 bot.action(/topgroups:(today|total|weekly)/, async (ctx) => {
-  await ctx.answerCbQuery();
+  await safeAnswerCbQuery(ctx);
   if (await maybeRejectUser(ctx, ctx.chat.id.toString())) return;
   const mode = ctx.match[1];
   const contextName = ctx.chat?.title || ctx.chat?.username || 'this chat';
@@ -1127,12 +1148,11 @@ bot.action(/topgroups:(today|total|weekly)/, async (ctx) => {
   const message = formatGlobalGroupsText(entries, mode, contextName);
   const imageBuffer = await generateRankingImage(entries, {
     title: 'TOP GROUPS',
-    subtitle: `GLOBAL • ${mode === 'total' ? 'ALL TIME' : mode === 'weekly' ? 'THIS WEEK' : 'TODAY'}`,
+    subtitle: `GLOBAL â€¢ ${mode === 'total' ? 'ALL TIME' : mode === 'weekly' ? 'THIS WEEK' : 'TODAY'}`,
     nameKey: 'groupName',
     valueKey: 'value',
-    truncateName: false,
   });
-  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard('topgroups', mode) });
+  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard('topgroups') });
 });
 
 bot.on('my_chat_member', async (ctx) => {
