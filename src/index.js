@@ -716,6 +716,35 @@ function buildRankingKeyboard(prefix = 'rankings') {
   };
 }
 
+async function sendPhotoThenText(ctx, imageBuffer, text, options = {}) {
+  // Callback buttons edit/delete the old bot message. Remove it first so the
+  // refreshed result is sent as one single photo message.
+  if (ctx.callbackQuery?.message) {
+    try {
+      await ctx.deleteMessage();
+    } catch (_) {}
+  }
+
+  // Photo + leaderboard/profile text + buttons are ONE Telegram message.
+  // The blank lines create the requested visual separation between the image
+  // and the text because the text is sent as the photo caption.
+  const cleanText = cleanUnicode(text);
+  const caption = `\n\n${cleanText}`;
+
+  if (caption.length > 1024) {
+    console.warn(`[Ranking] Photo caption is ${caption.length} characters; Telegram limit is 1024.`);
+  }
+
+  return ctx.replyWithPhoto(
+    { source: imageBuffer },
+    {
+      caption,
+      parse_mode: 'HTML',
+      ...options,
+    },
+  );
+}
+
 async function sendOrEditMessage(ctx, text, options = {}) {
   if (ctx.callbackQuery?.message) {
     try {
