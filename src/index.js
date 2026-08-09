@@ -19,7 +19,7 @@ import {
   getISTDayKey,
 } from './rankingLogic.js';
 import { formatProfileText } from './profileLogic.js';
-import { generateRankingImage } from './rankingImage.js';
+import { generateRankingImage, generateProfileImage } from './rankingImage.js';
 import { formatGlobalUsersText, formatGlobalGroupsText, formatMyTopGroupsText } from './globalLogic.js';
 import {
   RULE_5_MESSAGE_GAP_MS,
@@ -111,6 +111,9 @@ async function ensureIndexes() {
 
   const botGroupAddLogs = database.collection('bot_group_add_logs');
   await botGroupAddLogs.createIndex({ groupId: 1 }, { unique: true });
+
+  const rankingMessages = database.collection('ranking_messages');
+  await rankingMessages.createIndex({ chatId: 1 }, { unique: true });
 
   await ensureMiniGameIndexes(database);
 }
@@ -903,19 +906,83 @@ async function sendRankingReply(ctx, mode = 'today') {
   const contextName = ctx.chat?.title || ctx.chat?.username || 'this chat';
   const { topUsers, totalValue } = await getTopUsers(groupId, mode);
 
+  const database = await connectDb();
+  const rankingMessages = database.collection('ranking_messages');
+
+  // Keep only one active rankings message per chat. This prevents repeated
+  // /rankings calls and ranking button clicks from filling the group with
+  // duplicate ranking posts.
+  const previous = await rankingMessages.findOne({ chatId: groupId });
+  if (previous?.messageId) {
+    try {
+      await ctx.telegram.deleteMessage(groupId, Number(previous.messageId));
+    } catch (error) {
+      const description = error?.response?.description || error?.description || '';
+      // Ignore "message to delete not found" / already deleted messages.
+      if (!description.includes('message to delete not found')) {
+        console.warn(`[Rankings] Could not delete previous ranking message ${previous.messageId}:`, description);
+      }
+    }
+  }
+
   if (!topUsers.length) {
-    await sendOrEditMessage(ctx, 'No activity yet in this group.', { reply_markup: buildRankingKeyboard() });
+    const sent = await ctx.reply(
+      'No activity yet in this group.',
+      { parse_mode: 'HTML', reply_markup: buildRankingKeyboard() },
+    );
+
+    if (sent?.message_id) {
+      await rankingMessages.updateOne(
+        { chatId: groupId },
+        {
+          $set: {
+            chatId: groupId,
+            messageId: String(sent.message_id),
+            updatedAt: new Date(),
+          },
+        },
+        { upsert: true },
+      );
+    }
     return;
   }
 
   const message = formatRankingText(topUsers, totalValue, mode, contextName);
-  const metricKey = mode === 'total' ? 'messageCount' : mode === 'weekly' ? 'weeklyMessageCount' : 'dailyMessageCount';
+  const metricKey =
+    mode === 'total'
+      ? 'messageCount'
+      : mode === 'weekly'
+        ? 'weeklyMessageCount'
+        : 'dailyMessageCount';
+
   const imageBuffer = await generateRankingImage(topUsers, {
     title: 'CHATFIGHT RANKINGS',
-    subtitle: `${contextName} â€¢ ${mode === 'total' ? 'ALL TIME' : mode === 'weekly' ? 'THIS WEEK' : 'TODAY'}`,
+    subtitle: `${contextName} • ${mode === 'total' ? 'ALL TIME' : mode === 'weekly' ? 'THIS WEEK' : 'TODAY'}`,
     valueKey: metricKey,
   });
-  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard() });
+
+  const sent = await ctx.replyWithPhoto(
+    { source: imageBuffer },
+    {
+      caption: `\n\n${cleanUnicode(message)}`,
+      parse_mode: 'HTML',
+      reply_markup: buildRankingKeyboard(),
+    },
+  );
+
+  if (sent?.message_id) {
+    await rankingMessages.updateOne(
+      { chatId: groupId },
+      {
+        $set: {
+          chatId: groupId,
+          messageId: String(sent.message_id),
+          updatedAt: new Date(),
+        },
+      },
+      { upsert: true },
+    );
+  }
 }
 
 bot.command('leaderboard', async (ctx) => {
