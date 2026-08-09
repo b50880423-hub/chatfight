@@ -8,6 +8,7 @@ import {
   getISTDayKey,
 } from './rankingLogic.js';
 import { formatProfileText } from './profileLogic.js';
+import { generateRankingImage } from './rankingImage.js';
 import { formatGlobalUsersText, formatGlobalGroupsText, formatMyTopGroupsText } from './globalLogic.js';
 import {
   RULE_5_MESSAGE_GAP_MS,
@@ -212,33 +213,15 @@ function buildBanMessage(displayName, banUntil, banReason) {
   ].join('\n');
 }
 
-async function safeAnswerCbQuery(ctx, ...args) {
-  try {
-    return await ctx.answerCbQuery(...args);
-  } catch (error) {
-    const message = error?.description || error?.message || '';
-    if (
-      !message.includes('query is too old') &&
-      !message.includes('query ID is invalid') &&
-      !message.includes('query is already answered')
-    ) {
-      console.error('[Callback] Failed to answer callback query:', message || error);
-    }
-    return false;
-  }
-}
-
 async function sendUserNotification(userId, text) {
   try {
     await bot.telegram.sendMessage(userId, text, { parse_mode: 'HTML' });
     return true;
   } catch (error) {
-    const message = error?.description || error?.message || String(error);
+    const message = error?.description || error?.message || '';
 
-    // Telegram does not allow bots to start a private chat with a user
-    // who has never started/interacted with the bot.
     if (message.includes("bot can't initiate conversation")) {
-      console.log(`[Notify] User ${userId} has not started the bot; notification skipped.`);
+      console.log(`[Notify] User ${userId} has not started the bot.`);
       return false;
     }
 
@@ -787,7 +770,7 @@ async function sendOrEditMessage(ctx, text, options = {}) {
       ) {
         // Just answer the callback instead of treating it as a bot error.
         try {
-          await safeAnswerCbQuery(ctx);
+          await ctx.answerCbQuery();
         } catch (_) {}
 
         return null;
@@ -1044,7 +1027,7 @@ bot.command('unbanuser', async (ctx) => {
 });
 
 bot.action(/banuser:(\d+):(1d|2d|3d|10d|20d|1m|3m|1y|perm|ignore)/, async (ctx) => {
-  await safeAnswerCbQuery(ctx);
+  await ctx.answerCbQuery();
   if (ctx.chat?.id?.toString() !== loggerChatId) {
     await ctx.reply('Ban controls are available only in the logger group.');
     return;
@@ -1069,13 +1052,13 @@ bot.action(/banuser:(\d+):(1d|2d|3d|10d|20d|1m|3m|1y|perm|ignore)/, async (ctx) 
 });
 
 bot.action('welcome:rankings', async (ctx) => {
-  await safeAnswerCbQuery(ctx);
+  await ctx.answerCbQuery();
   if (await maybeRejectUser(ctx, ctx.chat?.type === 'private' ? null : ctx.chat?.id?.toString())) return;
   await sendRankingReply(ctx, 'today');
 });
 
 bot.action('welcome:profile', async (ctx) => {
-  await safeAnswerCbQuery(ctx);
+  await ctx.answerCbQuery();
   if (await maybeRejectUser(ctx, ctx.chat?.type === 'private' ? null : ctx.chat?.id?.toString())) return;
   const groupId = ctx.chat.id.toString();
   const userId = ctx.from?.id?.toString();
@@ -1098,7 +1081,7 @@ bot.action('welcome:profile', async (ctx) => {
 });
 
 bot.action(/minigame_lb:(chat|global)/, async (ctx) => {
-  await safeAnswerCbQuery(ctx);
+  await ctx.answerCbQuery();
   const groupId = ctx.chat?.type === 'private' ? null : ctx.chat?.id?.toString();
   if (!groupId) return;
   if (await maybeRejectUser(ctx, groupId)) return;
@@ -1117,14 +1100,26 @@ bot.action(/minigame_lb:(chat|global)/, async (ctx) => {
 });
 
 bot.action(/rankings:(today|total|weekly)/, async (ctx) => {
-  await safeAnswerCbQuery(ctx);
-  if (await maybeRejectUser(ctx, ctx.chat.id.toString())) return;
-  const mode = ctx.match[1];
-  await sendRankingReply(ctx, mode);
+  try {
+    await ctx.answerCbQuery();
+  } catch (error) {
+    const message = error?.description || error?.message || '';
+    if (!message.includes('query is too old') && !message.includes('query ID is invalid')) {
+      console.error('[Rankings] Callback answer error:', error);
+    }
+  }
+
+  try {
+    if (await maybeRejectUser(ctx, ctx.chat.id.toString())) return;
+    const mode = ctx.match[1];
+    await sendRankingReply(ctx, mode);
+  } catch (error) {
+    console.error('[Rankings] Handler error:', error);
+  }
 });
 
 bot.action(/topuser:(today|total|weekly)/, async (ctx) => {
-  await safeAnswerCbQuery(ctx);
+  await ctx.answerCbQuery();
   if (await maybeRejectUser(ctx, ctx.chat.id.toString())) return;
   const mode = ctx.match[1];
   const contextName = ctx.chat?.title || ctx.chat?.username || 'this chat';
@@ -1140,7 +1135,7 @@ bot.action(/topuser:(today|total|weekly)/, async (ctx) => {
 });
 
 bot.action(/topgroups:(today|total|weekly)/, async (ctx) => {
-  await safeAnswerCbQuery(ctx);
+  await ctx.answerCbQuery();
   if (await maybeRejectUser(ctx, ctx.chat.id.toString())) return;
   const mode = ctx.match[1];
   const contextName = ctx.chat?.title || ctx.chat?.username || 'this chat';
