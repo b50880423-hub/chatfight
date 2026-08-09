@@ -29,11 +29,8 @@ function graphemeCount(value) {
   return Array.from(value).length;
 }
 
-function imageName(value, max = null) {
-  const text = cleanText(value) || 'Unknown';
-  if (!max) return text;
-  const chars = Array.from(text);
-  return chars.length > max ? `${chars.slice(0, max).join('')}...` : text;
+function imageName(value) {
+  return cleanText(value) || 'Unknown';
 }
 
 function fitNameFontSize(value, base = 25) {
@@ -58,7 +55,6 @@ export async function generateRankingImage(entries = [], options = {}) {
     nameKey = 'displayName',
     valueKey = 'value',
     valueSuffix = '',
-    truncateName = false,
   } = options;
 
   const rows = entries.slice(0, 10);
@@ -70,10 +66,7 @@ export async function generateRankingImage(entries = [], options = {}) {
   const rowSvg = rows.map((entry, index) => {
     const y = rowStart + index * rowHeight;
     const rank = rankSymbols[index] || `${index + 1}.`;
-    const name = imageName(
-      entry[nameKey] || entry.userName || entry.username || entry.groupName || entry.groupId,
-      truncateName ? 30 : null,
-    );
+    const name = imageName(entry[nameKey] || entry.userName || entry.username || entry.groupName || entry.groupId);
     const nameFontSize = fitNameFontSize(name);
     const value = `${formatNumber(entry[valueKey])}${valueSuffix}`;
     const fill = index < 3 ? '#ffffff' : '#e7e9f4';
@@ -106,11 +99,11 @@ export async function generateRankingImage(entries = [], options = {}) {
         <feDropShadow dx="0" dy="8" stdDeviation="12" flood-opacity="0.35"/>
       </filter>
       <style>
-        .title { font: 800 42px 'Noto Sans', 'Noto Sans Symbols2', 'Noto Color Emoji', 'DejaVu Sans', Arial, sans-serif; fill: #ffffff; }
-        .subtitle { font: 500 20px 'Noto Sans', 'Noto Sans Symbols2', 'Noto Color Emoji', 'DejaVu Sans', Arial, sans-serif; fill: #bfc5e8; }
-        .rank { font: 700 25px 'Noto Sans', 'Noto Sans Symbols2', 'Noto Color Emoji', 'DejaVu Sans', Arial, sans-serif; fill: #ffffff; }
-        .name { font: 650 25px 'Noto Sans', 'Noto Sans Symbols2', 'Noto Color Emoji', 'DejaVu Sans', Arial, sans-serif; fill: #ffffff; }
-        .value { font: 750 25px 'Noto Sans', 'Noto Sans Symbols2', 'Noto Color Emoji', 'DejaVu Sans', Arial, sans-serif; }
+        .title { font: 800 42px 'Noto Sans', 'DejaVu Sans', Arial, sans-serif; fill: #ffffff; }
+        .subtitle { font: 500 20px 'Noto Sans', 'DejaVu Sans', Arial, sans-serif; fill: #bfc5e8; }
+        .rank { font: 700 25px 'Noto Sans', 'DejaVu Sans', Arial, sans-serif; fill: #ffffff; }
+        .name { font: 650 25px 'Noto Sans', 'DejaVu Sans', Arial, sans-serif; fill: #ffffff; }
+        .value { font: 750 25px 'Noto Sans', 'DejaVu Sans', Arial, sans-serif; }
         .line { stroke: #ffffff; stroke-opacity: .10; stroke-width: 1; }
         .empty { font: 600 28px 'Noto Sans', 'DejaVu Sans', Arial, sans-serif; fill: #c7cbe4; }
       </style>
@@ -121,7 +114,7 @@ export async function generateRankingImage(entries = [], options = {}) {
     <rect x="48" y="38" width="1104" height="604" rx="26" fill="#0a0d18" opacity=".30" filter="url(#shadow)"/>
     <rect x="72" y="62" width="1056" height="6" rx="3" fill="url(#bar)"/>
     <text x="72" y="112" class="title">${xml(title)}</text>
-    ${subtitle ? `<text x="72" y="143" class="subtitle" textLength="1056" lengthAdjust="spacingAndGlyphs">${xml(subtitle)}</text>` : ''}
+    ${subtitle ? `<text x="72" y="143" class="subtitle">${xml(subtitle)}</text>` : ''}
     ${rowSvg}
     ${empty}
     <text x="1128" y="620" text-anchor="end" class="subtitle">TOP 10</text>
@@ -150,10 +143,10 @@ export async function generateProfileImage(user, rank, totalUsers, contextName =
         <stop offset="100%" stop-color="#4a2d65"/>
       </linearGradient>
       <style>
-        .title { font: 800 42px 'Noto Sans', 'Noto Sans Symbols2', 'Noto Color Emoji', 'DejaVu Sans', Arial, sans-serif; fill: #ffffff; }
-        .name { font: 800 32px 'Noto Sans', 'Noto Sans Symbols2', 'Noto Color Emoji', 'DejaVu Sans', Arial, sans-serif; fill: #ffffff; }
-        .label { font: 600 19px 'Noto Sans', 'Noto Sans Symbols2', 'Noto Color Emoji', 'DejaVu Sans', Arial, sans-serif; fill: #aeb5dc; }
-        .value { font: 800 30px 'Noto Sans', 'Noto Sans Symbols2', 'Noto Color Emoji', 'DejaVu Sans', Arial, sans-serif; fill: #ffffff; }
+        .title { font: 800 42px 'Noto Sans', 'DejaVu Sans', Arial, sans-serif; fill: #ffffff; }
+        .name { font: 800 32px 'Noto Sans', 'DejaVu Sans', Arial, sans-serif; fill: #ffffff; }
+        .label { font: 600 19px 'Noto Sans', 'DejaVu Sans', Arial, sans-serif; fill: #aeb5dc; }
+        .value { font: 800 30px 'Noto Sans', 'DejaVu Sans', Arial, sans-serif; fill: #ffffff; }
       </style>
     </defs>
     <rect width="1200" height="570" rx="34" fill="url(#bg)"/>

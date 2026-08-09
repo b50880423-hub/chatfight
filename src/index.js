@@ -1,17 +1,5 @@
 import 'dotenv/config';
-
-// Remove invalid/unpaired UTF-16 surrogate code units before sending Telegram text.
-// This prevents malformed Unicode in user display names from breaking ranking captions.
-function cleanUnicode(value = '') {
-  return Array.from(String(value || ''))
-    .filter((char) => {
-      const codePoint = char.codePointAt(0);
-      return codePoint < 0xD800 || codePoint > 0xDFFF;
-    })
-    .join('');
-}
-import {
-Telegraf, Input } from 'telegraf';
+import { Telegraf, Input } from 'telegraf';
 import { MongoClient } from 'mongodb';
 import {
   formatRankingText,
@@ -36,6 +24,17 @@ function escapeHtml(value = '') {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+function cleanUnicode(value = '') {
+  // Remove only invalid/unpaired UTF-16 surrogates. Keep valid Unicode
+  // surrogate pairs used by emoji and many fancy Unicode name characters.
+  return Array.from(String(value ?? ''))
+    .filter((char) => {
+      const codePoint = char.codePointAt(0);
+      return codePoint < 0xD800 || codePoint > 0xDFFF;
+    })
+    .join('');
 }
 
 function normalizeDisplayName(value = '') {
@@ -66,10 +65,7 @@ const mongoUri = process.env.MONGODB_URI || (process.env.NODE_ENV === 'developme
 const dbName = process.env.MONGODB_DB_NAME || 'chatfight';
 const loggerChatId = getLoggerChatId(process.env);
 const publicGroupLink = process.env.PUBLIC_GROUP_LINK || '';
-const ownerIds = (process.env.OWNER_IDS || '')
-  .split(',')
-  .map(id => id.trim())
-  .filter(Boolean);
+const ownerId = process.env.OWNER_ID || '';
 
 if (!token) {
   console.error('TELEGRAM_BOT_TOKEN is required');
@@ -82,7 +78,6 @@ if (!mongoUri) {
 }
 
 const bot = new Telegraf(token);
-let botUsername = '';
 const client = new MongoClient(mongoUri);
 let db;
 
@@ -107,15 +102,6 @@ async function ensureIndexes() {
 
   const groupStats = database.collection('group_stats');
   await groupStats.createIndex({ groupId: 1 }, { unique: true });
-
-  // Logger de-duplication: a user is logged only on their first /start,
-  // and a group is logged only the first time the bot is added there.
-  const botStartLogs = database.collection('bot_start_logs');
-  await botStartLogs.createIndex({ userId: 1 }, { unique: true });
-
-  const botGroupAddLogs = database.collection('bot_group_add_logs');
-  await botGroupAddLogs.createIndex({ groupId: 1 }, { unique: true });
-
   await ensureMiniGameIndexes(database);
 }
 
@@ -241,17 +227,8 @@ function buildBanMessage(displayName, banUntil, banReason) {
 async function sendUserNotification(userId, text) {
   try {
     await bot.telegram.sendMessage(userId, text, { parse_mode: 'HTML' });
-    return true;
   } catch (error) {
-    const message = error?.description || error?.message || '';
-
-    if (message.includes("bot can't initiate conversation")) {
-      console.log(`[Notify] User ${userId} has not started the bot.`);
-      return false;
-    }
-
-    console.error('Failed to notify user', userId, message);
-    return false;
+    console.error('Failed to notify user', userId, error.message || error);
   }
 }
 
@@ -665,45 +642,7 @@ async function getUserTopGroups(userId) {
 }
 
 function isOwner(userId) {
-  return ownerIds.includes(String(userId));
-}
-
-async function logBotStartOnce(payload) {
-  const database = await connectDb();
-  const logs = database.collection('bot_start_logs');
-
-  try {
-    await logs.insertOne({
-      userId: String(payload.userId),
-      userName: payload.userName || 'unknown',
-      createdAt: new Date(),
-    });
-  } catch (error) {
-    if (error?.code === 11000) return false;
-    throw error;
-  }
-
-  await sendLoggerMessage(buildLoggerMessage('bot-started', payload));
-  return true;
-}
-
-async function logBotAddedOnce(payload) {
-  const database = await connectDb();
-  const logs = database.collection('bot_group_add_logs');
-
-  try {
-    await logs.insertOne({
-      groupId: String(payload.groupId),
-      groupName: payload.groupName || 'unknown',
-      createdAt: new Date(),
-    });
-  } catch (error) {
-    if (error?.code === 11000) return false;
-    throw error;
-  }
-
-  await sendLoggerMessage(buildLoggerMessage('group-added', payload));
-  return true;
+  return ownerId && String(userId) === String(ownerId);
 }
 
 async function sendLoggerMessage(message) {
@@ -728,43 +667,26 @@ async function sendLoggerModerationMessage(message, replyMarkup) {
 }
 
 async function sendWelcomeMessage(ctx, targetChatId = null) {
-  const supportGroupLink = process.env.SUPPORT_GROUP_LINK || publicGroupLink;
+  const keyboardButtons = [
+    [{ text: '📊 Rankings', callback_data: 'welcome:rankings' }, { text: '👤 Profile', callback_data: 'welcome:profile' }],
+  ];
 
-  const rows = [];
-  if (supportGroupLink) {
-    rows.push([{ text: '💬 Support Group', url: supportGroupLink }]);
+  if (publicGroupLink) {
+    keyboardButtons.push([{ text: '🚀 Join Public Group', url: publicGroupLink }]);
   }
 
-  if (botUsername) {
-    rows.push([{ text: '➕ Add Me', url: `https://t.me/${botUsername}?startgroup=true` }]);
-  }
-
-  const keyboard = rows.length
-    ? { inline_keyboard: rows }
-    : undefined;
-
-  const message = `📊 <b>CHATFIGHT</b>
-
-Your ultimate <b>chat activity &amp; statistics bot</b>.
-
-💬 Track messages
-🏆 Compete on leaderboards
-📈 Watch your activity grow
-👥 Discover your group's top chatters
-
-<b>Turn every message into a statistic.</b>`;
-
-  const options = {
-    parse_mode: 'HTML',
-    ...(keyboard ? { reply_markup: keyboard } : {}),
+  const keyboard = {
+    inline_keyboard: keyboardButtons,
   };
 
+  const message = 'Welcome to ChatFight! Use the buttons below to explore the bot.';
+
   if (targetChatId) {
-    await ctx.telegram.sendMessage(targetChatId, message, options);
+    await ctx.telegram.sendMessage(targetChatId, message, { reply_markup: keyboard });
     return;
   }
 
-  await ctx.reply(message, options);
+  await ctx.reply(message, { reply_markup: keyboard });
 }
 
 bot.start(async (ctx) => {
@@ -772,13 +694,8 @@ bot.start(async (ctx) => {
     userId: ctx.from?.id,
     userName: ctx.from?.username || ctx.from?.first_name || 'unknown',
   };
-
-  // Log each user only once, even if they press /start repeatedly.
-  try {
-    await logBotStartOnce(payload);
-  } catch (error) {
-    console.error('[Logger] Failed to record bot start:', error);
-  }
+  const message = buildLoggerMessage('bot-started', payload);
+  await sendLoggerMessage(message);
 
   if (ctx.chat?.type === 'private' && await maybeRejectUser(ctx)) {
     return;
@@ -787,15 +704,13 @@ bot.start(async (ctx) => {
   await sendWelcomeMessage(ctx);
 });
 
-function buildRankingKeyboard(prefix = 'rankings', selectedMode = null) {
-  const mark = (mode, label) => selectedMode === mode ? `✅ ${label}` : label;
-
+function buildRankingKeyboard(prefix = 'rankings') {
   return {
     inline_keyboard: [
-      [{ text: mark('total', '📈 Total'), callback_data: `${prefix}:total` }],
+      [{ text: '📈 Total', callback_data: `${prefix}:total` }],
       [
-        { text: mark('today', '📅 Today'), callback_data: `${prefix}:today` },
-        { text: mark('weekly', '🗓️ Weekly'), callback_data: `${prefix}:weekly` },
+        { text: '📅 Today', callback_data: `${prefix}:today` },
+        { text: '🗓️ Weekly', callback_data: `${prefix}:weekly` },
       ],
     ],
   };
@@ -831,6 +746,8 @@ async function sendPhotoThenText(ctx, imageBuffer, text, options = {}) {
 }
 
 async function sendOrEditMessage(ctx, text, options = {}) {
+  text = cleanUnicode(text);
+  
   if (ctx.callbackQuery?.message) {
     try {
       return await ctx.editMessageText(text, {
@@ -909,122 +826,19 @@ async function sendRankingReply(ctx, mode = 'today') {
   const contextName = ctx.chat?.title || ctx.chat?.username || 'this chat';
   const { topUsers, totalValue } = await getTopUsers(groupId, mode);
 
-  const database = await connectDb();
-  const rankingMessages = database.collection('ranking_messages');
-  const previous = await rankingMessages.findOne({ chatId: groupId });
-
-  const keyboard = buildRankingKeyboard('rankings', mode);
-
   if (!topUsers.length) {
-    const text = 'No activity yet in this group.';
-    const existingMessageId = previous?.messageId;
-
-    if (existingMessageId) {
-      try {
-        if (ctx.callbackQuery?.message) {
-          await ctx.editMessageText(text, {
-            parse_mode: 'HTML',
-            reply_markup: keyboard,
-          });
-        } else {
-          await ctx.telegram.editMessageText(
-            groupId,
-            Number(existingMessageId),
-            undefined,
-            text,
-            { parse_mode: 'HTML', reply_markup: keyboard },
-          );
-        }
-        return;
-      } catch (error) {
-        console.warn('[Rankings] Could not edit existing ranking message:', error?.response?.description || error?.message);
-      }
-    }
-
-    const sent = await ctx.reply(text, {
-      parse_mode: 'HTML',
-      reply_markup: keyboard,
-    });
-
-    if (sent?.message_id) {
-      await rankingMessages.updateOne(
-        { chatId: groupId },
-        { $set: { chatId: groupId, messageId: String(sent.message_id), updatedAt: new Date() } },
-        { upsert: true },
-      );
-    }
+    await sendOrEditMessage(ctx, 'No activity yet in this group.', { reply_markup: buildRankingKeyboard() });
     return;
   }
 
   const message = formatRankingText(topUsers, totalValue, mode, contextName);
-  const metricKey =
-    mode === 'total'
-      ? 'messageCount'
-      : mode === 'weekly'
-        ? 'weeklyMessageCount'
-        : 'dailyMessageCount';
-
+  const metricKey = mode === 'total' ? 'messageCount' : mode === 'weekly' ? 'weeklyMessageCount' : 'dailyMessageCount';
   const imageBuffer = await generateRankingImage(topUsers, {
     title: 'CHATFIGHT RANKINGS',
     subtitle: `${contextName} • ${mode === 'total' ? 'ALL TIME' : mode === 'weekly' ? 'THIS WEEK' : 'TODAY'}`,
     valueKey: metricKey,
   });
-
-  const media = {
-    type: 'photo',
-    media: Input.fromBuffer(imageBuffer),
-    caption: `\n\n${cleanUnicode(message)}`,
-    parse_mode: 'HTML',
-  };
-
-  // Keep the same Telegram message and simply edit its photo/caption/buttons.
-  // This also means the selected tab can show a persistent tick mark.
-  if (previous?.messageId) {
-    try {
-      if (ctx.callbackQuery?.message) {
-        await ctx.editMessageMedia(media, { reply_markup: keyboard });
-      } else {
-        await ctx.telegram.editMessageMedia(
-          groupId,
-          Number(previous.messageId),
-          undefined,
-          media,
-          { reply_markup: keyboard },
-        );
-      }
-      await rankingMessages.updateOne(
-        { chatId: groupId },
-        { $set: { updatedAt: new Date() } },
-        { upsert: true },
-      );
-      return;
-    } catch (error) {
-      console.warn('[Rankings] Could not edit existing ranking message; sending a new one:', error?.response?.description || error?.message);
-    }
-  }
-
-  const sent = await ctx.replyWithPhoto(
-    { source: imageBuffer },
-    {
-      caption: `\n\n${cleanUnicode(message)}`,
-      parse_mode: 'HTML',
-      reply_markup: keyboard,
-    },
-  );
-
-  if (sent?.message_id) {
-    await rankingMessages.updateOne(
-      { chatId: groupId },
-      {
-        $set: {
-          chatId: groupId,
-          messageId: String(sent.message_id),
-          updatedAt: new Date(),
-        },
-      },
-      { upsert: true },
-    );
-  }
+  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard() });
 }
 
 bot.command('leaderboard', async (ctx) => {
@@ -1059,7 +873,7 @@ bot.command('topuser', async (ctx) => {
   const message = formatGlobalUsersText(entries, 'today', contextName);
   const imageBuffer = await generateRankingImage(entries, {
     title: 'TOP USERS',
-    subtitle: 'GLOBAL â€¢ TODAY',
+    subtitle: 'GLOBAL • TODAY',
     nameKey: 'displayName',
     valueKey: 'value',
   });
@@ -1073,7 +887,7 @@ bot.command('topgroups', async (ctx) => {
   const message = formatGlobalGroupsText(entries, 'today', contextName);
   const imageBuffer = await generateRankingImage(entries, {
     title: 'TOP GROUPS',
-    subtitle: 'GLOBAL â€¢ TODAY',
+    subtitle: 'GLOBAL • TODAY',
     nameKey: 'groupName',
     valueKey: 'value',
   });
@@ -1278,22 +1092,10 @@ bot.action(/minigame_lb:(chat|global)/, async (ctx) => {
 });
 
 bot.action(/rankings:(today|total|weekly)/, async (ctx) => {
-  try {
-    await ctx.answerCbQuery();
-  } catch (error) {
-    const message = error?.description || error?.message || '';
-    if (!message.includes('query is too old') && !message.includes('query ID is invalid')) {
-      console.error('[Rankings] Callback answer error:', error);
-    }
-  }
-
-  try {
-    if (await maybeRejectUser(ctx, ctx.chat.id.toString())) return;
-    const mode = ctx.match[1];
-    await sendRankingReply(ctx, mode);
-  } catch (error) {
-    console.error('[Rankings] Handler error:', error);
-  }
+  await ctx.answerCbQuery();
+  if (await maybeRejectUser(ctx, ctx.chat.id.toString())) return;
+  const mode = ctx.match[1];
+  await sendRankingReply(ctx, mode);
 });
 
 bot.action(/topuser:(today|total|weekly)/, async (ctx) => {
@@ -1305,7 +1107,7 @@ bot.action(/topuser:(today|total|weekly)/, async (ctx) => {
   const message = formatGlobalUsersText(entries, mode, contextName);
   const imageBuffer = await generateRankingImage(entries, {
     title: 'TOP USERS',
-    subtitle: `GLOBAL â€¢ ${mode === 'total' ? 'ALL TIME' : mode === 'weekly' ? 'THIS WEEK' : 'TODAY'}`,
+    subtitle: `GLOBAL • ${mode === 'total' ? 'ALL TIME' : mode === 'weekly' ? 'THIS WEEK' : 'TODAY'}`,
     nameKey: 'displayName',
     valueKey: 'value',
   });
@@ -1321,7 +1123,7 @@ bot.action(/topgroups:(today|total|weekly)/, async (ctx) => {
   const message = formatGlobalGroupsText(entries, mode, contextName);
   const imageBuffer = await generateRankingImage(entries, {
     title: 'TOP GROUPS',
-    subtitle: `GLOBAL â€¢ ${mode === 'total' ? 'ALL TIME' : mode === 'weekly' ? 'THIS WEEK' : 'TODAY'}`,
+    subtitle: `GLOBAL • ${mode === 'total' ? 'ALL TIME' : mode === 'weekly' ? 'THIS WEEK' : 'TODAY'}`,
     nameKey: 'groupName',
     valueKey: 'value',
   });
@@ -1338,12 +1140,8 @@ bot.on('my_chat_member', async (ctx) => {
       groupId: member.chat.id,
       groupLink: member.chat.username ? `https://t.me/${member.chat.username}` : 'n/a',
     };
-    try {
-      await logBotAddedOnce(payload);
-    } catch (error) {
-      console.error('[Logger] Failed to record group addition:', error);
-    }
-
+    const message = buildLoggerMessage('group-added', payload);
+    await sendLoggerMessage(message);
     const database = await connectDb();
     await registerMiniGameGroup(
       database,
@@ -1461,16 +1259,6 @@ async function start() {
   setInterval(runMiniGames, 15000);
 
   console.log('[MiniGame] Scheduler started');
-
-  // Cache the bot username so the /start welcome message can include
-  // an "Add Me" button that opens Telegram's group picker.
-  try {
-    const me = await bot.telegram.getMe();
-    botUsername = me.username || '';
-    console.log(`[Bot] Username loaded: @${botUsername || 'unknown'}`);
-  } catch (error) {
-    console.error('[Bot] Failed to load bot username:', error);
-  }
 
   await bot.launch();
 

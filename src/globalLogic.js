@@ -28,6 +28,10 @@ function cleanUnicode(value = '') {
 
 function limitUnicodeName(value, max = 30) {
   const text = cleanUnicode(value).trim();
+  if (typeof Intl !== 'undefined' && Intl.Segmenter) {
+    const graphemes = Array.from(new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text), x => x.segment);
+    return graphemes.length > max ? `${graphemes.slice(0, max).join('')}...` : text;
+  }
   const chars = Array.from(text);
   return chars.length > max ? `${chars.slice(0, max).join('')}...` : text;
 }
@@ -52,16 +56,20 @@ export function formatGlobalUsersText(entries, mode = 'today', contextName = 'th
   const totalLabel = mode === 'total' ? 'All-time total' : mode === 'weekly' ? 'Week total' : 'Today total';
   const lines = entries.map((entry, index) => {
     const nameLink = buildUserLink(entry);
-    return `<b>${index + 1}.</b> <b>${nameLink}</b> — ${Number(entry.value || 0).toLocaleString('de-DE')}`;
+    return `<b>${index + 1}.</b> <b>${nameLink}</b> — ${entry.value}`;
   });
 
+  const modeLabel = mode === 'total' ? 'Total' : mode === 'weekly' ? 'Weekly' : 'Today';
+
   return [
-    '<b>🌍 GLOBAL LEADERBOARD</b>',
+    '<b>ChatFight - Top Users</b>',
+    `<b>Group:</b> ${escapeHtml(contextName)}`,
+    `<b>Mode:</b> ${modeLabel}`,
     '',
     `<b>${title}</b>`,
     ...lines,
     '',
-    `<b>${totalLabel}:</b> ${Number(entries[0]?.totalValue || 0).toLocaleString('de-DE')}`,
+    `<b>${totalLabel}:</b> ${entries[0]?.totalValue || 0}`,
   ].join('\n');
 }
 
@@ -70,16 +78,20 @@ export function formatGlobalGroupsText(entries, mode = 'today', contextName = 't
   const totalLabel = mode === 'total' ? 'All-time total' : mode === 'weekly' ? 'Week total' : 'Today total';
   const lines = entries.map((entry, index) => {
     const nameLink = buildGroupLink(entry);
-    return `<b>${index + 1}.</b> <b>${nameLink}</b> — ${Number(entry.value || 0).toLocaleString('de-DE')}`;
+    return `<b>${index + 1}.</b> <b>${nameLink}</b> — ${entry.value}`;
   });
 
+  const modeLabel = mode === 'total' ? 'Total' : mode === 'weekly' ? 'Weekly' : 'Today';
+
   return [
-    '<b>🌍 GLOBAL GROUP LEADERBOARD</b>',
+    '<b>ChatFight - Top Groups</b>',
+    `<b>Group:</b> ${escapeHtml(contextName)}`,
+    `<b>Mode:</b> ${modeLabel}`,
     '',
     `<b>${title}</b>`,
     ...lines,
     '',
-    `<b>${totalLabel}:</b> ${Number(entries[0]?.totalValue || 0).toLocaleString('de-DE')}`,
+    `<b>${totalLabel}:</b> ${entries[0]?.totalValue || 0}`,
   ].join('\n');
 }
 
@@ -88,7 +100,7 @@ export function formatMyTopGroupsText(entries, displayName) {
   const lines = entries.map((entry, index) => {
     const groupName = escapeHtml(entry.groupName || entry.groupId);
     const groupLink = entry.groupLink ? `<a href="${escapeHtml(entry.groupLink)}">${groupName}</a>` : groupName;
-    return `<b>${index + 1}.</b> ${groupLink} — ${Number(entry.messageCount || 0).toLocaleString('de-DE')}`;
+    return `<b>${index + 1}.</b> ${groupLink} — ${entry.messageCount || 0}`;
   });
 
   return [

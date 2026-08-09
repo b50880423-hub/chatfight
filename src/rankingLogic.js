@@ -28,6 +28,10 @@ function cleanUnicode(value = '') {
 
 function limitUnicodeName(value, max = 30) {
   const text = cleanUnicode(value).trim();
+  if (typeof Intl !== 'undefined' && Intl.Segmenter) {
+    const graphemes = Array.from(new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text), x => x.segment);
+    return graphemes.length > max ? `${graphemes.slice(0, max).join('')}...` : text;
+  }
   const chars = Array.from(text);
   return chars.length > max ? `${chars.slice(0, max).join('')}...` : text;
 }
@@ -77,16 +81,20 @@ export function formatRankingText(topUsers, totalValue, mode = 'today', contextN
 
   const lines = topUsers.map((user, index) => {
     const nameLink = buildUserLink(user);
-    return `<b>${index + 1}.</b> <b>${nameLink}</b> — ${Number(user[metricKey] ?? 0).toLocaleString('de-DE')}`;
+    return `<b>${index + 1}.</b> <b>${nameLink}</b> — ${user[metricKey] ?? 0}`;
   });
 
+  const modeLabel = mode === 'total' ? 'Total' : mode === 'weekly' ? 'Weekly' : 'Today';
+
   return [
-    `<b>${escapeHtml(contextName)}</b>`,
+    '<b>ChatFight - Rankings</b>',
+    `<b>Group:</b> ${escapeHtml(contextName)}`,
+    `<b>Mode:</b> ${modeLabel}`,
     '',
     `<b>${title}</b>`,
     ...lines,
     '',
-    `<b>${totalLabel}:</b> ${Number(totalValue || 0).toLocaleString('de-DE')}`,
+    `<b>${totalLabel}:</b> ${totalValue}`,
   ].join('\n');
 }
 

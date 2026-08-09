@@ -48,116 +48,14 @@ function userLink(from) {
   return `<a href="tg://user?id=${from.id}">${name}</a>`;
 }
 
-// Mini-game backgrounds rotate in this exact order and loop after #8.
-let gameBackgroundIndex = 0;
-
-const GAME_BACKGROUNDS = [
-  {
-    name: 'Galaxy',
-    defs: `<linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#09001f"/><stop offset="50%" stop-color="#24115c"/><stop offset="100%" stop-color="#050b2b"/>
-    </linearGradient>`,
-    background: 'url(#bg)',
-    panel: '#171044',
-    stroke: '#7c5cff',
-    accent: '#c4b5fd',
-    sub: '#c4b5fd',
-  },
-  {
-    name: 'Neon',
-    defs: `<linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#18002e"/><stop offset="45%" stop-color="#5b0b68"/><stop offset="100%" stop-color="#001b3d"/>
-    </linearGradient>`,
-    background: 'url(#bg)',
-    panel: '#210b35',
-    stroke: '#ff4fd8',
-    accent: '#67e8f9',
-    sub: '#f0abfc',
-  },
-  {
-    name: 'Fire',
-    defs: `<linearGradient id="bg" x1="0" y1="1" x2="1" y2="0">
-      <stop offset="0%" stop-color="#250000"/><stop offset="45%" stop-color="#8b1e00"/><stop offset="100%" stop-color="#ff7a00"/>
-    </linearGradient>`,
-    background: 'url(#bg)',
-    panel: '#421008',
-    stroke: '#ffb020',
-    accent: '#fff1a8',
-    sub: '#fed7aa',
-  },
-  {
-    name: 'Ocean',
-    defs: `<linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#001b2e"/><stop offset="50%" stop-color="#075985"/><stop offset="100%" stop-color="#003c52"/>
-    </linearGradient>`,
-    background: 'url(#bg)',
-    panel: '#063653',
-    stroke: '#38bdf8',
-    accent: '#bae6fd',
-    sub: '#a5f3fc',
-  },
-  {
-    name: 'Pastel',
-    defs: `<linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#6d5dfc"/><stop offset="45%" stop-color="#f0a6ca"/><stop offset="100%" stop-color="#7dd3fc"/>
-    </linearGradient>`,
-    background: 'url(#bg)',
-    panel: '#5b477d',
-    stroke: '#fef3c7',
-    accent: '#ffffff',
-    sub: '#fce7f3',
-  },
-  {
-    name: 'Dark Luxury',
-    defs: `<linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#050505"/><stop offset="55%" stop-color="#18120a"/><stop offset="100%" stop-color="#33220b"/>
-    </linearGradient>`,
-    background: 'url(#bg)',
-    panel: '#15110a',
-    stroke: '#d4af37',
-    accent: '#f9e7a8',
-    sub: '#d6c7a1',
-  },
-  {
-    name: 'Cyber',
-    defs: `<linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#001515"/><stop offset="50%" stop-color="#003b3b"/><stop offset="100%" stop-color="#08133d"/>
-    </linearGradient>`,
-    background: 'url(#bg)',
-    panel: '#062b2c',
-    stroke: '#00f5d4',
-    accent: '#67e8f9',
-    sub: '#5eead4',
-  },
-  {
-    name: 'Night City',
-    defs: `<linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#090b20"/><stop offset="55%" stop-color="#18234d"/><stop offset="100%" stop-color="#0a0a16"/>
-    </linearGradient>`,
-    background: 'url(#bg)',
-    panel: '#101936',
-    stroke: '#818cf8',
-    accent: '#c7d2fe',
-    sub: '#a5b4fc',
-  },
-];
-
 async function renderGameImage(word) {
   const safe = escapeHtml(word);
-  const theme = GAME_BACKGROUNDS[gameBackgroundIndex];
-  gameBackgroundIndex = (gameBackgroundIndex + 1) % GAME_BACKGROUNDS.length;
-
   const svg = `<?xml version="1.0" encoding="UTF-8"?>
   <svg width="1000" height="650" xmlns="http://www.w3.org/2000/svg">
-    <defs>${theme.defs}</defs>
-    <rect width="1000" height="650" fill="${theme.background}"/>
-    <circle cx="110" cy="100" r="95" fill="${theme.stroke}" opacity="0.10"/>
-    <circle cx="890" cy="545" r="150" fill="${theme.accent}" opacity="0.08"/>
-    <rect x="35" y="35" width="930" height="580" rx="38" fill="${theme.panel}" fill-opacity="0.94" stroke="${theme.stroke}" stroke-width="4"/>
-    <rect x="65" y="65" width="870" height="520" rx="28" fill="none" stroke="${theme.accent}" stroke-opacity="0.16" stroke-width="2"/>
-    <text x="500" y="125" text-anchor="middle" font-family="Arial, sans-serif" font-size="28" font-weight="700" fill="${theme.accent}" letter-spacing="5">MINI GAME • ${theme.name.toUpperCase()}</text>
+    <rect width="1000" height="650" fill="#111827"/>
+    <rect x="35" y="35" width="930" height="580" rx="38" fill="#1f2937" stroke="#374151" stroke-width="4"/>
     <text x="500" y="325" text-anchor="middle" dominant-baseline="middle" font-family="Arial, sans-serif" font-size="92" font-weight="800" fill="white" letter-spacing="8">${safe}</text>
-    <text x="500" y="535" text-anchor="middle" font-family="Arial, sans-serif" font-size="30" font-weight="600" fill="${theme.sub}" letter-spacing="3">TYPE THE WORD</text>
+    <text x="500" y="535" text-anchor="middle" font-family="Arial, sans-serif" font-size="30" fill="#9ca3af">TYPE THE WORD</text>
   </svg>`;
   return sharp(Buffer.from(svg)).png().toBuffer();
 }
