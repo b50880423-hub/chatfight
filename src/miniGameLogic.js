@@ -324,8 +324,11 @@ export function formatMiniGameLeaderboard(entries, scope = 'chat') {
   const title = scope === 'global' ? '🌍 GLOBAL MINI-GAME LEADERBOARD' : '💬 THIS CHAT MINI-GAME LEADERBOARD';
   if (!entries.length) return `<b>${title}</b>\n\nNo scores yet.`;
   const lines = entries.map((entry, index) => {
-    const rawName = entry.displayName || entry.username || `User ${entry.userId}`;
-    const cleanName = String(rawName).replace(/[\uD800-\uDFFF]/g, '')
+    // Mini-game leaderboard text uses Telegram usernames instead of display names.
+    // Fall back to the display name when the user has no Telegram username.
+    const username = String(entry.username || '').trim().replace(/^@+/, '');
+    const rawName = username ? `@${username}` : (entry.displayName || `User ${entry.userId}`);
+    const cleanName = String(rawName).replace(/[\uD800-\uDFFF]/g, '');
     const shortName = Array.from(cleanName).length > 30 ? `${Array.from(cleanName).slice(0, 30).join('')}...` : cleanName;
     const formattedPoints = Math.trunc(Number(entry.points || 0)).toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
     const name = escapeHtml(shortName);
