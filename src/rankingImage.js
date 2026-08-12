@@ -33,6 +33,12 @@ function imageName(value) {
   return cleanText(value) || 'Unknown';
 }
 
+function imageUsername(value, fallback = '') {
+  const username = cleanText(value).replace(/^@+/, '');
+  if (username) return `@${limitUserName(username, 30)}`;
+  return limitUserName(fallback, 30) || 'Unknown';
+}
+
 function fitNameFontSize(value, base = 25) {
   const count = graphemeCount(value);
   if (count <= 18) return base;
@@ -42,8 +48,14 @@ function fitNameFontSize(value, base = 25) {
   return 13;
 }
 
+function limitUserName(value, max = 30) {
+  const text = cleanText(value);
+  const chars = Array.from(text);
+  return chars.length > max ? `${chars.slice(0, max).join('')}...` : text;
+}
+
 function formatNumber(value) {
-  return Number(value || 0).toLocaleString('de-DE');
+  return Math.trunc(Number(value || 0)).toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
 }
 
 const rankSymbols = ['🥇', '🥈', '🥉'];
@@ -66,7 +78,10 @@ export async function generateRankingImage(entries = [], options = {}) {
   const rowSvg = rows.map((entry, index) => {
     const y = rowStart + index * rowHeight;
     const rank = rankSymbols[index] || `${index + 1}.`;
-    const name = imageName(entry[nameKey] || entry.userName || entry.username || entry.groupName || entry.groupId);
+    const rawName = entry[nameKey] || entry.userName || entry.username || entry.groupName || entry.groupId;
+    const name = nameKey === 'groupName'
+      ? imageName(rawName)
+      : imageUsername(entry.userName || entry.username, rawName);
     const nameFontSize = fitNameFontSize(name);
     const value = `${formatNumber(entry[valueKey])}${valueSuffix}`;
     const fill = index < 3 ? '#ffffff' : '#e7e9f4';
@@ -126,7 +141,7 @@ export async function generateRankingImage(entries = [], options = {}) {
 export async function generateProfileImage(user, rank, totalUsers, contextName = '') {
   const width = 1200;
   const height = 570;
-  const name = imageName(user?.displayName || user?.userName || `User ${user?.userId || ''}`);
+  const name = imageUsername(user?.userName || user?.username, user?.displayName || `User ${user?.userId || ''}`);
   const group = imageName(contextName);
   const nameFontSize = fitNameFontSize(name, 32);
   const groupFontSize = fitNameFontSize(group, 19);

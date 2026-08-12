@@ -36,6 +36,12 @@ function limitUnicodeName(value, max = 30) {
   return chars.length > max ? `${chars.slice(0, max).join('')}...` : text;
 }
 
+function formatNumber(value = 0) {
+  const numeric = Number(value || 0);
+  if (!Number.isFinite(numeric)) return '0';
+  return Math.trunc(numeric).toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+}
+
 function buildUserLink(user) {
   const rawName = normalizeDisplayName(user.displayName || user.userName || `User ${user.userId}`);
   const shortName = limitUnicodeName(rawName, 30);
@@ -81,20 +87,17 @@ export function formatRankingText(topUsers, totalValue, mode = 'today', contextN
 
   const lines = topUsers.map((user, index) => {
     const nameLink = buildUserLink(user);
-    return `<b>${index + 1}.</b> <b>${nameLink}</b> — ${user[metricKey] ?? 0}`;
+    return `<b>${index + 1}.</b> <b>${nameLink}</b> — ${formatNumber(user[metricKey] ?? 0)}`;
   });
-
-  const modeLabel = mode === 'total' ? 'Total' : mode === 'weekly' ? 'Weekly' : 'Today';
 
   return [
     '<b>ChatFight - Rankings</b>',
-    `<b>Group:</b> ${escapeHtml(contextName)}`,
-    `<b>Mode:</b> ${modeLabel}`,
+    escapeHtml(contextName),
     '',
     `<b>${title}</b>`,
     ...lines,
     '',
-    `<b>${totalLabel}:</b> ${totalValue}`,
+    `<b>${totalLabel}:</b> ${formatNumber(totalValue)}`,
   ].join('\n');
 }
 

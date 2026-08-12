@@ -36,6 +36,12 @@ function limitUnicodeName(value, max = 30) {
   return chars.length > max ? `${chars.slice(0, max).join('')}...` : text;
 }
 
+function formatNumber(value = 0) {
+  const numeric = Number(value || 0);
+  if (!Number.isFinite(numeric)) return '0';
+  return Math.trunc(numeric).toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+}
+
 function buildUserLink(entry) {
   const rawName = normalizeDisplayName(entry.displayName || entry.userName || `User ${entry.userId}`);
   const shortName = limitUnicodeName(rawName, 30);
@@ -46,9 +52,7 @@ function buildUserLink(entry) {
 }
 
 function buildGroupLink(entry) {
-  const name = escapeHtml(entry.groupName || entry.groupId);
-  const href = entry.groupLink || null;
-  return href ? `<a href="${escapeHtml(href)}">${name}</a>` : name;
+  return escapeHtml(entry.groupName || entry.groupId);
 }
 
 export function formatGlobalUsersText(entries, mode = 'today', contextName = 'this chat') {
@@ -56,20 +60,19 @@ export function formatGlobalUsersText(entries, mode = 'today', contextName = 'th
   const totalLabel = mode === 'total' ? 'All-time total' : mode === 'weekly' ? 'Week total' : 'Today total';
   const lines = entries.map((entry, index) => {
     const nameLink = buildUserLink(entry);
-    return `<b>${index + 1}.</b> <b>${nameLink}</b> — ${entry.value}`;
+    return `<b>${index + 1}.</b> <b>${nameLink}</b> — ${formatNumber(entry.value)}`;
   });
 
   const modeLabel = mode === 'total' ? 'Total' : mode === 'weekly' ? 'Weekly' : 'Today';
 
   return [
     '<b>ChatFight - Top Users</b>',
-    `<b>Group:</b> ${escapeHtml(contextName)}`,
-    `<b>Mode:</b> ${modeLabel}`,
+    escapeHtml(contextName),
     '',
     `<b>${title}</b>`,
     ...lines,
     '',
-    `<b>${totalLabel}:</b> ${entries[0]?.totalValue || 0}`,
+    `<b>${totalLabel}:</b> ${formatNumber(entries[0]?.totalValue || 0)}`,
   ].join('\n');
 }
 
@@ -78,20 +81,19 @@ export function formatGlobalGroupsText(entries, mode = 'today', contextName = 't
   const totalLabel = mode === 'total' ? 'All-time total' : mode === 'weekly' ? 'Week total' : 'Today total';
   const lines = entries.map((entry, index) => {
     const nameLink = buildGroupLink(entry);
-    return `<b>${index + 1}.</b> <b>${nameLink}</b> — ${entry.value}`;
+    return `<b>${index + 1}.</b> <b>${nameLink}</b> — ${formatNumber(entry.value)}`;
   });
 
   const modeLabel = mode === 'total' ? 'Total' : mode === 'weekly' ? 'Weekly' : 'Today';
 
   return [
     '<b>ChatFight - Top Groups</b>',
-    `<b>Group:</b> ${escapeHtml(contextName)}`,
-    `<b>Mode:</b> ${modeLabel}`,
+    escapeHtml(contextName),
     '',
     `<b>${title}</b>`,
     ...lines,
     '',
-    `<b>${totalLabel}:</b> ${entries[0]?.totalValue || 0}`,
+    `<b>${totalLabel}:</b> ${formatNumber(entries[0]?.totalValue || 0)}`,
   ].join('\n');
 }
 
@@ -100,7 +102,7 @@ export function formatMyTopGroupsText(entries, displayName) {
   const lines = entries.map((entry, index) => {
     const groupName = escapeHtml(entry.groupName || entry.groupId);
     const groupLink = entry.groupLink ? `<a href="${escapeHtml(entry.groupLink)}">${groupName}</a>` : groupName;
-    return `<b>${index + 1}.</b> ${groupLink} — ${entry.messageCount || 0}`;
+    return `<b>${index + 1}.</b> ${groupName} — ${formatNumber(entry.messageCount || 0)}`; 
   });
 
   return [

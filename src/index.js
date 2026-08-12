@@ -65,6 +65,19 @@ const mongoUri = process.env.MONGODB_URI || (process.env.NODE_ENV === 'developme
 const dbName = process.env.MONGODB_DB_NAME || 'chatfight';
 const loggerChatId = getLoggerChatId(process.env);
 const publicGroupLink = process.env.PUBLIC_GROUP_LINK || '';
+const supportChatLink = process.env.SUPPORT_CHAT_LINK || process.env.PUBLIC_GROUP_LINK || '';
+
+function addTickToKeyboard(keyboard, activeCallback) {
+  if (!keyboard?.inline_keyboard || !activeCallback) return keyboard;
+  return {
+    ...keyboard,
+    inline_keyboard: keyboard.inline_keyboard.map(row => row.map(button =>
+      button.callback_data === activeCallback
+        ? { ...button, text: button.text.replace(/ ✓$/, '') + ' ✓' }
+        : { ...button, text: button.text.replace(/ ✓$/, '') }
+    )),
+  };
+}
 const ownerId = process.env.OWNER_ID || '';
 
 if (!token) {
@@ -684,27 +697,32 @@ async function sendLoggerModerationMessage(message, replyMarkup) {
   }
 }
 
-async function sendWelcomeMessage(ctx, targetChatId = null) {
+async function sendWelcomeMessage(ctx, targetChatId = null, activeCallback = null) {
   const keyboardButtons = [
-    [{ text: '📊 Rankings', callback_data: 'welcome:rankings' }, { text: '👤 Profile', callback_data: 'welcome:profile' }],
+    [{ text: '➕ Add Me', url: `https://t.me/${ctx.botInfo?.username || 'ChatFightBot'}?startgroup=true` }],
   ];
-
-  if (publicGroupLink) {
-    keyboardButtons.push([{ text: '🚀 Join Public Group', url: publicGroupLink }]);
+  if (supportChatLink) {
+    keyboardButtons[0].unshift({ text: '💬 Support Chat', url: supportChatLink });
   }
 
-  const keyboard = {
-    inline_keyboard: keyboardButtons,
-  };
-
-  const message = 'Welcome to ChatFight! Use the buttons below to explore the bot.';
+  const keyboard = { inline_keyboard: keyboardButtons };
+  const message = [
+    '📊 <b>Welcome to the ChatFight Arena!</b>',
+    'I track every message sent in this chat to rank the most active users. Who will claim the #1 spot?',
+    '',
+    '⚡ <b>Quick Commands:</b>',
+    '🏆 /rankings — View the top chatters',
+    '👤 /profile — Check your message count &amp; rank',
+    '',
+    '<i>Start chatting now to climb the leaderboard!</i>',
+  ].join('\n');
 
   if (targetChatId) {
-    await ctx.telegram.sendMessage(targetChatId, message, { reply_markup: keyboard });
+    await ctx.telegram.sendMessage(targetChatId, message, { parse_mode: 'HTML', reply_markup: keyboard });
     return;
   }
 
-  await ctx.reply(message, { reply_markup: keyboard });
+  await ctx.reply(message, { parse_mode: 'HTML', reply_markup: keyboard });
 }
 
 bot.start(async (ctx) => {
@@ -722,8 +740,8 @@ bot.start(async (ctx) => {
   await sendWelcomeMessage(ctx);
 });
 
-function buildRankingKeyboard(prefix = 'rankings') {
-  return {
+function buildRankingKeyboard(prefix = 'rankings', activeCallback = null) {
+  return addTickToKeyboard({
     inline_keyboard: [
       [{ text: '📈 Total', callback_data: `${prefix}:total` }],
       [
@@ -731,7 +749,7 @@ function buildRankingKeyboard(prefix = 'rankings') {
         { text: '🗓️ Weekly', callback_data: `${prefix}:weekly` },
       ],
     ],
-  };
+  }, activeCallback);
 }
 
 async function sendPhotoThenText(ctx, imageBuffer, text, options = {}) {
@@ -942,7 +960,7 @@ async function sendRankingReply(ctx, mode = 'today') {
   const { topUsers, totalValue } = await getTopUsers(groupId, mode);
 
   if (!topUsers.length) {
-    await sendOrEditMessage(ctx, 'No activity yet in this group.', { reply_markup: buildRankingKeyboard() });
+    await sendOrEditMessage(ctx, 'No activity yet in this group.', { reply_markup: buildRankingKeyboard('rankings', `rankings:${mode}`) });
     return;
   }
 
@@ -953,7 +971,7 @@ async function sendRankingReply(ctx, mode = 'today') {
     subtitle: `${contextName} • ${mode === 'total' ? 'ALL TIME' : mode === 'weekly' ? 'THIS WEEK' : 'TODAY'}`,
     valueKey: metricKey,
   });
-  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard() });
+  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard('rankings', `rankings:${mode}`) });
 }
 
 bot.command('leaderboard', async (ctx) => {
@@ -973,7 +991,7 @@ bot.command('leaderboard', async (ctx) => {
     valueKey: 'points',
     valueSuffix: ' pts',
   });
-  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: miniGameLeaderboardKeyboard() });
+  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: miniGameLeaderboardKeyboard('chat') });
 });
 
 bot.command(['rankings', 'ranking'], async (ctx) => {
@@ -1203,7 +1221,7 @@ bot.action(/minigame_lb:(chat|global)/, async (ctx) => {
     valueKey: 'points',
     valueSuffix: ' pts',
   });
-  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: miniGameLeaderboardKeyboard() });
+  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: miniGameLeaderboardKeyboard(scope) });
 });
 
 bot.action(/rankings:(today|total|weekly)/, async (ctx) => {
@@ -1226,7 +1244,7 @@ bot.action(/topuser:(today|total|weekly)/, async (ctx) => {
     nameKey: 'displayName',
     valueKey: 'value',
   });
-  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard('topuser') });
+  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard('topuser', `topuser:${mode}`) });
 });
 
 bot.action(/topgroups:(today|total|weekly)/, async (ctx) => {
@@ -1242,7 +1260,7 @@ bot.action(/topgroups:(today|total|weekly)/, async (ctx) => {
     nameKey: 'groupName',
     valueKey: 'value',
   });
-  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard('topgroups') });
+  await sendPhotoThenText(ctx, imageBuffer, message, { reply_markup: buildRankingKeyboard('topgroups', `topgroups:${mode}`) });
 });
 
 bot.on('my_chat_member', async (ctx) => {

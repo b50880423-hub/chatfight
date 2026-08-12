@@ -26,8 +26,25 @@ function cleanUnicode(value = '') {
     .join('');
 }
 
+function formatNumber(value = 0) {
+  const numeric = Number(value || 0);
+  if (!Number.isFinite(numeric)) return '0';
+  return Math.trunc(numeric).toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+}
+
+function limitUnicodeName(value, max = 30) {
+  const text = cleanUnicode(value).trim();
+  if (typeof Intl !== 'undefined' && Intl.Segmenter) {
+    const graphemes = Array.from(new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text), x => x.segment);
+    return graphemes.length > max ? `${graphemes.slice(0, max).join('')}...` : text;
+  }
+  const chars = Array.from(text);
+  return chars.length > max ? `${chars.slice(0, max).join('')}...` : text;
+}
+
 function buildUserLink(user) {
-  const name = escapeHtml(cleanUnicode(normalizeDisplayName(user.displayName || user.userName || `User ${user.userId}`)));
+  const raw = cleanUnicode(normalizeDisplayName(user.displayName || user.userName || `User ${user.userId}`));
+  const name = escapeHtml(limitUnicodeName(raw, 30));
   const username = normalizeUsername(user.userName);
   const href = user.userId ? `tg://user?id=${user.userId}` : username ? `https://t.me/${username}` : null;
   return href ? `<a href="${escapeHtml(href)}">${name}</a>` : name;
@@ -38,15 +55,15 @@ export function formatProfileText(user, rank, totalUsers, contextName) {
   const lines = ['<b>ChatFight - Profile</b>'];
 
   if (contextName) {
-    lines.push(`<b>Group:</b> ${escapeHtml(cleanUnicode(contextName))}`);
+    lines.push(escapeHtml(limitUnicodeName(cleanUnicode(contextName), 100)));
   }
 
   lines.push(
     `<b>User:</b> <b>${nameLink}</b>`,
     '',
-    `<b>Total messages:</b> ${user.messageCount || 0}`,
-    `<b>Today messages:</b> ${user.dailyMessageCount || 0}`,
-    `<b>This week:</b> ${user.weeklyMessageCount || 0}`,
+    `<b>Total messages:</b> ${formatNumber(user.messageCount || 0)}`,
+    `<b>Today messages:</b> ${formatNumber(user.dailyMessageCount || 0)}`,
+    `<b>This week:</b> ${formatNumber(user.weeklyMessageCount || 0)}`,
     `<b>Overall rank:</b> #${rank} of ${totalUsers}`,
     `<b>Joined:</b> ${new Date(user.createdAt).toLocaleDateString()}`,
   );

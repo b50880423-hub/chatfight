@@ -5,6 +5,15 @@ const GAME_INTERVAL_MS = 60 * 60 * 1000;
 const GAME_DURATION_MS = 10 * 60 * 1000;
 const SEND_RETRY_MS = 60 * 1000;
 
+const GAME_THEMES = [
+  { bg: '#0f172a', panel: '#1e293b', accent: '#38bdf8', glow: '#7dd3fc' },
+  { bg: '#1a1025', panel: '#3b1f4a', accent: '#e879f9', glow: '#f0abfc' },
+  { bg: '#081c15', panel: '#14532d', accent: '#4ade80', glow: '#86efac' },
+  { bg: '#1c1917', panel: '#451a03', accent: '#fb923c', glow: '#fdba74' },
+  { bg: '#172554', panel: '#1e3a8a', accent: '#818cf8', glow: '#c7d2fe' },
+  { bg: '#2e1065', panel: '#581c87', accent: '#c084fc', glow: '#e9d5ff' },
+];
+
 const WORDS = [
   'RECEPTION','ADVENTURE','BEAUTIFUL','CHALLENGE','COMPUTER','DREAMER','ELEPHANT','FREEDOM',
   'HAPPINESS','JOURNEY','KNOWLEDGE','LANGUAGE','MYSTERY','MOUNTAIN','NOTEBOOK','PHOENIX',
@@ -50,12 +59,20 @@ function userLink(from) {
 
 async function renderGameImage(word) {
   const safe = escapeHtml(word);
+  const theme = GAME_THEMES[Math.floor(Math.random() * GAME_THEMES.length)];
   const svg = `<?xml version="1.0" encoding="UTF-8"?>
   <svg width="1000" height="650" xmlns="http://www.w3.org/2000/svg">
-    <rect width="1000" height="650" fill="#111827"/>
-    <rect x="35" y="35" width="930" height="580" rx="38" fill="#1f2937" stroke="#374151" stroke-width="4"/>
-    <text x="500" y="325" text-anchor="middle" dominant-baseline="middle" font-family="Arial, sans-serif" font-size="92" font-weight="800" fill="white" letter-spacing="8">${safe}</text>
-    <text x="500" y="535" text-anchor="middle" font-family="Arial, sans-serif" font-size="30" fill="#9ca3af">TYPE THE WORD</text>
+    <defs>
+      <radialGradient id="bg" cx="50%" cy="35%" r="80%"><stop offset="0%" stop-color="${theme.panel}"/><stop offset="100%" stop-color="${theme.bg}"/></radialGradient>
+      <filter id="glow"><feGaussianBlur stdDeviation="12" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    </defs>
+    <rect width="1000" height="650" rx="42" fill="url(#bg)"/>
+    <circle cx="110" cy="90" r="70" fill="${theme.accent}" opacity="0.12"/>
+    <circle cx="900" cy="560" r="110" fill="${theme.glow}" opacity="0.10"/>
+    <rect x="35" y="35" width="930" height="580" rx="38" fill="none" stroke="${theme.accent}" stroke-width="3" opacity="0.8"/>
+    <text x="500" y="105" text-anchor="middle" font-family="Arial, sans-serif" font-size="28" font-weight="700" fill="${theme.glow}" letter-spacing="6">CHATFIGHT • MINI GAME</text>
+    <text x="500" y="330" text-anchor="middle" dominant-baseline="middle" font-family="Arial, sans-serif" font-size="92" font-weight="900" fill="white" letter-spacing="8" filter="url(#glow)">${safe}</text>
+    <text x="500" y="535" text-anchor="middle" font-family="Arial, sans-serif" font-size="30" font-weight="700" fill="${theme.glow}" letter-spacing="3">TYPE THE WORD</text>
   </svg>`;
   return sharp(Buffer.from(svg)).png().toBuffer();
 }
@@ -309,19 +326,20 @@ export function formatMiniGameLeaderboard(entries, scope = 'chat') {
   const lines = entries.map((entry, index) => {
     const rawName = entry.displayName || entry.username || `User ${entry.userId}`;
     const cleanName = String(rawName).replace(/[\uD800-\uDFFF]/g, '')
-    const shortName = rawName.length > 28 ? `${rawName.slice(0, 28)}...` : rawName;
+    const shortName = Array.from(cleanName).length > 30 ? `${Array.from(cleanName).slice(0, 30).join('')}...` : cleanName;
+    const formattedPoints = Math.trunc(Number(entry.points || 0)).toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
     const name = escapeHtml(shortName);
     const link = `<a href="tg://user?id=${entry.userId}">${name}</a>`;
-    return `<b>${index + 1}.</b> ${link} — <b>${entry.points || 0}</b> pts`;
+    return `<b>${index + 1}.</b> ${link} — <b>${formattedPoints}</b> pts`;
   });
   return [`<b>${title}</b>`, '', ...lines].join('\n');
 }
 
-export function miniGameLeaderboardKeyboard() {
+export function miniGameLeaderboardKeyboard(activeScope = null) {
   return {
     inline_keyboard: [[
-      { text: '💬 This Chat', callback_data: 'minigame_lb:chat' },
-      { text: '🌍 Global', callback_data: 'minigame_lb:global' },
+      { text: `💬 This Chat${activeScope === 'chat' ? ' ✓' : ''}`, callback_data: 'minigame_lb:chat' },
+      { text: `🌍 Global${activeScope === 'global' ? ' ✓' : ''}`, callback_data: 'minigame_lb:global' },
     ]],
   };
 }
