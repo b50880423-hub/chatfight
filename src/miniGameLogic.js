@@ -260,7 +260,12 @@ export async function handleMiniGameAnswer({ db, ctx }) {
     await ctx.telegram.callApi('setMessageReaction', {
       chat_id: chat.id,
       message_id: message.message_id,
-      reaction: [{ type: 'emoji', emoji: '🎉' }],
+      reaction: [{
+              type: 'emoji',
+              emoji: ['👀', '⚡️', '🌝', '🥰', '😘', '💘'][
+                Math.floor(Math.random() * 6)
+              ],
+            }],
     });
   } catch (reactionError) {
     console.warn(
