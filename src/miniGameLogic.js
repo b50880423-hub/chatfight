@@ -4,6 +4,8 @@ import sharp from 'sharp';
 const GAME_INTERVAL_MS = 60 * 60 * 1000;
 const GAME_DURATION_MS = 10 * 60 * 1000;
 const SEND_RETRY_MS = 60 * 1000;
+const TELEGRAM_SEND_GAP_MS = 700;
+const TELEGRAM_RETRY_MAX_MS = 30 * 1000;
 
 const GAME_THEMES = [
   { bg: '#0f172a', panel: '#1e293b', accent: '#38bdf8', glow: '#7dd3fc' },
@@ -77,8 +79,17 @@ async function renderGameImage(word) {
   return sharp(Buffer.from(svg)).png().toBuffer();
 }
 
+function nextExactHour(now = new Date()) {
+  const next = new Date(now);
+  next.setMinutes(0, 0, 0);
+  next.setHours(next.getHours() + 1);
+  return next;
+}
+
 function nextHourFrom(now) {
-  return new Date(now.getTime() + GAME_INTERVAL_MS);
+  // Keep every round aligned to an exact clock hour (HH:00), not one hour
+  // from the moment the bot happened to start.
+  return nextExactHour(now);
 }
 
 export function getMiniGameConfig() {
@@ -106,7 +117,7 @@ export async function registerMiniGameGroup(db, groupId, groupName, groupLink = 
       $set: { groupName, groupLink, enabled: true, updatedAt: now },
       // A group should see its first game as soon as it is registered. The
       // hourly delay is only used after a round has started or expired.
-      $setOnInsert: { groupId, nextGameAt: now, activeRound: null, createdAt: now },
+      $setOnInsert: { groupId, nextGameAt: nextExactHour(now), activeRound: null, createdAt: now },
     },
     { upsert: true },
   );
@@ -117,6 +128,29 @@ function chooseWord(previousWord = '') {
   const available = WORDS.filter((word) => normalizeAnswer(word) !== previous);
   const pool = available.length ? available : WORDS;
   return pool[Math.floor(Math.random() * pool.length)];
+}
+
+async function sendTelegramWithRetry(sendFn, logger = console, label = 'Telegram send') {
+  let attempt = 0;
+  while (true) {
+    attempt += 1;
+    try {
+      return await sendFn();
+    } catch (error) {
+      const code = error?.response?.error_code;
+      const description = error?.response?.description || error?.message || String(error);
+      const retryable = [429, 502, 503, 504].includes(code) ||
+        /bad gateway|service unavailable|gateway timeout|econnreset|etimedout|enotfound|network/i.test(String(description));
+      if (!retryable || attempt >= 6) throw error;
+
+      const retryAfter = Number(error?.response?.parameters?.retry_after);
+      const delay = retryAfter > 0
+        ? retryAfter * 1000
+        : Math.min(TELEGRAM_RETRY_MAX_MS, 3000 * attempt);
+      logger.warn?.(`[MiniGame] ${label} failed (${code || 'network'}); retrying in ${Math.round(delay / 1000)}s...`);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
 }
 
 export async function startDueMiniGames({ db, telegram, logger = console }) {
@@ -132,11 +166,14 @@ export async function startDueMiniGames({ db, telegram, logger = console }) {
 
   console.log(`[MiniGame] Due groups: ${due.length}`);
 
-  for (const game of due) {
+  for (let index = 0; index < due.length; index += 1) {
+    const game = due[index];
+    if (index > 0) await new Promise((resolve) => setTimeout(resolve, TELEGRAM_SEND_GAP_MS));
+
     const word = chooseWord(game.lastWord || '');
     const claimed = await games.findOneAndUpdate(
       { _id: game._id, activeRound: null, nextGameAt: { $lte: now } },
-      { $set: { activeRound: { word, startedAt: now, expiresAt: new Date(now.getTime() + GAME_DURATION_MS) }, lastWord: word, nextGameAt: new Date(now.getTime() + GAME_INTERVAL_MS), updatedAt: now } },
+      { $set: { activeRound: { word, startedAt: now, expiresAt: new Date(now.getTime() + GAME_DURATION_MS) }, lastWord: word, nextGameAt: nextExactHour(now), updatedAt: now } },
       { returnDocument: 'after' },
     );
     if (!claimed?.activeRound) continue;
@@ -145,11 +182,11 @@ export async function startDueMiniGames({ db, telegram, logger = console }) {
     const caption = '⚡ Be the first to write the word shown in the photo to climb the mini-game leaderboard.\n\n⏱️ <b>Time remaining: 10 minutes</b>';
     try {
       const image = await renderGameImage(round.word);
-      await telegram.sendPhoto(claimed.groupId, Input.fromBuffer(image, 'chatfight-game.png'), {
+      await sendTelegramWithRetry(() => telegram.sendPhoto(claimed.groupId, Input.fromBuffer(image, 'chatfight-game.png'), {
         caption,
         parse_mode: 'HTML',
         has_spoiler: true,
-      });
+      }), logger, `photo send to ${claimed.groupId}`);
     } catch (error) {
       const description = error?.response?.description || error?.message || error;
       const descriptionText = String(description);
@@ -158,7 +195,7 @@ export async function startDueMiniGames({ db, telegram, logger = console }) {
       // by sending the same round as text instead of retrying forever.
       if (descriptionText.toLowerCase().includes('not enough rights to send photos')) {
         try {
-          await telegram.sendMessage(claimed.groupId, caption, { parse_mode: 'HTML' });
+          await sendTelegramWithRetry(() => telegram.sendMessage(claimed.groupId, caption, { parse_mode: 'HTML' }), logger, `text fallback to ${claimed.groupId}`);
           await games.updateOne(
             { _id: claimed._id },
             { $set: { lastSendError: null } },

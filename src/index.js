@@ -238,13 +238,27 @@ function isActiveDate(value) {
 }
 
 function buildBlockMessage(displayName, blockedUntil) {
+  const safeName = escapeHtml(displayName || 'This user');
   return [
-    `<b>ChatFight - Blocked</b>`,
+    `<b>ChatFight - Rule Violation</b>`,
     '',
-    `You have been blocked from the bot for <b>20 minutes</b> due to repeated fast messages in the group.`,
-    `Your block expires in <b>${formatRemainingTime(blockedUntil)}</b>.`,
-    'During this time, messages will not count toward rankings and bot commands are disabled.',
+    `<b>${safeName}</b> has been blocked from ChatFight for <b>20 minutes</b> for breaking ChatFight rules.`,
+    `Block time remaining: <b>${formatRemainingTime(blockedUntil)}</b>.`,
+    'During this time, the user cannot use ChatFight commands or earn ranking points.',
   ].join('\n');
+}
+
+async function getTelegramProfilePhoto(userId) {
+  try {
+    const photos = await bot.telegram.getUserProfilePhotos(Number(userId), 0, 1);
+    const sizes = photos?.photos?.[0];
+    if (!sizes?.length) return null;
+    // Telegram returns the same profile photo in several sizes. Use the largest.
+    return sizes[sizes.length - 1]?.file_id || null;
+  } catch (error) {
+    console.warn('[Profile] Unable to load Telegram profile photo:', error?.message || error);
+    return null;
+  }
 }
 
 function buildBanMessage(displayName, banUntil, banReason) {
@@ -434,6 +448,7 @@ async function checkSpamAndCount(ctx) {
   if (isActiveDate(newStatus.blockedUntil)) return;
 
   const spamCount = newStatus.spamCount || 0;
+  console.log(`[Rule 5] ${userId} message count: ${spamCount}/${RULE_5_MESSAGE_LIMIT}`);
 
   if (spamCount >= RULE_5_MESSAGE_LIMIT) {
     const blockedUntil = getRule5BlockUntil(now);
@@ -445,13 +460,7 @@ async function checkSpamAndCount(ctx) {
       { $set: { spamCount: 0, lastMessageAt: now, updatedAt: new Date() } },
     );
 
-    const blockText = [
-      `<b>ChatFight - User blocked in this group</b>`,
-      '',
-      `${escapeHtml(displayName)} has been blocked from the bot for <b>20 minutes</b> after sending ${RULE_5_MESSAGE_LIMIT} messages with less than 3 seconds between each message.`,
-      'Blocked users do not earn ranking points and cannot use bot commands until the block expires. The group itself is not muted.',
-    ].join('\n');
-
+    const blockText = buildBlockMessage(displayName, blockedUntil);
     await ctx.reply(blockText, { parse_mode: 'HTML' });
     await sendLoggerModerationMessage([
       '<b>ChatFight - Rule 5 moderation</b>',
@@ -776,7 +785,7 @@ async function sendPhotoThenText(ctx, imageBuffer, text, options = {}) {
         return await ctx.editMessageMedia(
           {
             type: 'photo',
-            media: { source: imageBuffer },
+            media: typeof imageBuffer === 'string' ? Input.fromFileId(imageBuffer) : { source: imageBuffer },
             caption,
             parse_mode: 'HTML',
           },
@@ -834,7 +843,7 @@ async function sendPhotoThenText(ctx, imageBuffer, text, options = {}) {
   // Commands such as /rankings intentionally create a new message.
   try {
     return await ctx.replyWithPhoto(
-      { source: imageBuffer },
+      typeof imageBuffer === 'string' ? Input.fromFileId(imageBuffer) : { source: imageBuffer },
       {
         caption,
         parse_mode: 'HTML',
@@ -1092,7 +1101,8 @@ bot.command('profile', async (ctx) => {
 
   const contextName = ctx.chat?.title || ctx.chat?.username || 'this chat';
   const message = formatProfileText(profileData.profile, profileData.rank, profileData.totalUsers, contextName);
-  const imageBuffer = await generateProfileImage(profileData.profile, profileData.rank, profileData.totalUsers, contextName);
+  const profilePhoto = await getTelegramProfilePhoto(userId);
+  const imageBuffer = profilePhoto || await generateProfileImage(profileData.profile, profileData.rank, profileData.totalUsers, contextName);
   await sendPhotoThenText(ctx, imageBuffer, message);
 });
 
@@ -1204,7 +1214,8 @@ bot.action('welcome:profile', async (ctx) => {
 
   const contextName = ctx.chat?.title || ctx.chat?.username || 'this chat';
   const message = formatProfileText(profileData.profile, profileData.rank, profileData.totalUsers, contextName);
-  const imageBuffer = await generateProfileImage(profileData.profile, profileData.rank, profileData.totalUsers, contextName);
+  const profilePhoto = await getTelegramProfilePhoto(userId);
+  const imageBuffer = profilePhoto || await generateProfileImage(profileData.profile, profileData.rank, profileData.totalUsers, contextName);
   await sendPhotoThenText(ctx, imageBuffer, message);
 });
 
@@ -1317,8 +1328,9 @@ bot.on('message', async (ctx) => {
     ctx.chat.username ? `https://t.me/${ctx.chat.username}` : null,
   );
 
-  await handleMiniGameAnswer({ db: database, ctx });
+  // Rule 5 runs first so rapid user messages cannot be skipped by another handler.
   await checkSpamAndCount(ctx);
+  await handleMiniGameAnswer({ db: database, ctx });
 });
 
 async function start() {
@@ -1360,21 +1372,65 @@ async function start() {
         { $set: { enabled: false, updatedAt: new Date() } },
       );
     } else {
-      // Make existing active groups due immediately after deployment.
-      await database.collection('mini_game_groups').updateOne(
-        { groupId },
-        {
-          $set: {
-            nextGameAt: new Date(),
-            enabled: true,
-            updatedAt: new Date(),
+      // Keep mini-games aligned to exact clock hours after every deployment.
+      // If a round is already active, preserve it; otherwise schedule the next
+      // round for the next HH:00 boundary (for example 1:37 -> 2:00).
+      if (!registered?.activeRound) {
+        const now = new Date();
+        const nextHour = new Date(now);
+        nextHour.setMinutes(0, 0, 0);
+        nextHour.setHours(nextHour.getHours() + 1);
+        await database.collection('mini_game_groups').updateOne(
+          { groupId },
+          {
+            $set: {
+              nextGameAt: nextHour,
+              enabled: true,
+              updatedAt: now,
+            },
           },
-        },
-      );
+        );
+      } else {
+        await database.collection('mini_game_groups').updateOne(
+          { groupId },
+          { $set: { enabled: true, updatedAt: new Date() } },
+        );
+      }
     }
   }
 
   console.log(`[MiniGame] Startup groups scheduled: ${knownGroups.length}`);
+
+  // Telegram must be connected BEFORE any Mini Game scheduler starts.
+  // Otherwise the scheduler can try to call Telegram while bot.launch() is
+  // still failing its initial getMe request (for example during a 502).
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  const launchTelegramWithRetry = async () => {
+    let attempt = 0;
+    while (true) {
+      attempt += 1;
+      try {
+        console.log(`[Telegram] Connecting to Telegram (attempt ${attempt})...`);
+        await bot.launch();
+        console.log('[Telegram] Connected successfully');
+        return;
+      } catch (error) {
+        const code = error?.response?.error_code;
+        const description = error?.response?.description || error?.message || String(error);
+        const retryable = [502, 503, 504].includes(code) ||
+          /bad gateway|service unavailable|gateway timeout|econnreset|etimedout|enotfound|network/i.test(String(description));
+
+        if (!retryable) throw error;
+
+        const delay = Math.min(30000, 5000 * Math.max(1, attempt));
+        console.error(`[Telegram] Connection failed (${code || 'network'}): ${description}. Retrying in ${Math.round(delay / 1000)}s...`);
+        await sleep(delay);
+      }
+    }
+  };
+
+  await launchTelegramWithRetry();
 
   const runMiniGames = async () => {
     try {
@@ -1390,14 +1446,11 @@ async function start() {
     }
   };
 
-  // Start mini-game scheduler BEFORE Telegram polling
+  // Start Mini Games ONLY after Telegram polling has connected successfully.
   await runMiniGames();
   setInterval(runMiniGames, 15000);
 
   console.log('[MiniGame] Scheduler started');
-
-  await bot.launch();
-
   console.log('Bot started');
 }
 
