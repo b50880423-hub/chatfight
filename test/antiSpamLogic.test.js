@@ -19,7 +19,7 @@ test('counts only human non-command messages', () => {
   }), true);
 });
 
-test('resets the quick-message sequence after a three-second gap', () => {
+test('resets the quick-message sequence after a two-second gap', () => {
   const now = new Date('2026-08-07T12:00:10.000Z');
 
   assert.equal(getNextSpamCount(new Date('2026-08-07T12:00:08.000Z'), 3, now), 4);
