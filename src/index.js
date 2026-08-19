@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { retryTelegramCall } from './telegramRetry.js';
 import { Telegraf, Input } from 'telegraf';
 import { MongoClient } from 'mongodb';
 import {
@@ -1408,7 +1409,7 @@ async function start() {
 
   console.log('[MiniGame] Scheduler started');
 
-  await bot.launch();
+  await retryTelegramCall(() => bot.launch(), { label: 'Startup' });
 
   console.log('Bot started');
 }
