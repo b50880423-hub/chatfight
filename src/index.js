@@ -448,7 +448,7 @@ async function checkSpamAndCount(ctx) {
     const blockText = [
       `<b>ChatFight - User blocked in this group</b>`,
       '',
-      `${escapeHtml(displayName)} has been blocked from the bot for <b>20 minutes</b> after sending ${RULE_5_MESSAGE_LIMIT} messages with less than 3 seconds between each message.`,
+      `${escapeHtml(displayName)} has been blocked from the bot for <b>20 minutes</b> after sending ${RULE_5_MESSAGE_LIMIT} messages with less than 2 seconds between each message.`,
       'Blocked users do not earn ranking points and cannot use bot commands until the block expires. The group itself is not muted.',
     ].join('\n');
 
