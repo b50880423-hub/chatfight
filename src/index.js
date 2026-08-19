@@ -1372,30 +1372,17 @@ async function start() {
         { $set: { enabled: false, updatedAt: new Date() } },
       );
     } else {
-      // Keep mini-games aligned to exact clock hours after every deployment.
-      // If a round is already active, preserve it; otherwise schedule the next
-      // round for the next HH:00 boundary (for example 1:37 -> 2:00).
-      if (!registered?.activeRound) {
-        const now = new Date();
-        const nextHour = new Date(now);
-        nextHour.setMinutes(0, 0, 0);
-        nextHour.setHours(nextHour.getHours() + 1);
-        await database.collection('mini_game_groups').updateOne(
-          { groupId },
-          {
-            $set: {
-              nextGameAt: nextHour,
-              enabled: true,
-              updatedAt: now,
-            },
+      // Make existing active groups due immediately after deployment.
+      await database.collection('mini_game_groups').updateOne(
+        { groupId },
+        {
+          $set: {
+            nextGameAt: new Date(),
+            enabled: true,
+            updatedAt: new Date(),
           },
-        );
-      } else {
-        await database.collection('mini_game_groups').updateOne(
-          { groupId },
-          { $set: { enabled: true, updatedAt: new Date() } },
-        );
-      }
+        },
+      );
     }
   }
 
