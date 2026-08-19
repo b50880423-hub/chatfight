@@ -4,6 +4,8 @@ import sharp from 'sharp';
 const GAME_INTERVAL_MS = 60 * 60 * 1000;
 const GAME_DURATION_MS = 10 * 60 * 1000;
 const SEND_RETRY_MS = 60 * 1000;
+const GROUP_SEND_DELAY_MS = 1200;
+const TELEGRAM_RETRY_CODES = new Set([429, 500, 502, 503, 504]);
 
 const GAME_THEMES = [
   { bg: '#0f172a', panel: '#1e293b', accent: '#38bdf8', glow: '#7dd3fc' },
@@ -77,8 +79,17 @@ async function renderGameImage(word) {
   return sharp(Buffer.from(svg)).png().toBuffer();
 }
 
+function nextExactHour(now = new Date()) {
+  const next = new Date(now);
+  next.setMinutes(0, 0, 0);
+  next.setHours(next.getHours() + 1);
+  return next;
+}
+
 function nextHourFrom(now) {
-  return new Date(now.getTime() + GAME_INTERVAL_MS);
+  // Keep every round aligned to an exact clock hour (HH:00), not one hour
+  // from the moment the bot happened to start.
+  return nextExactHour(now);
 }
 
 export function getMiniGameConfig() {
@@ -106,7 +117,7 @@ export async function registerMiniGameGroup(db, groupId, groupName, groupLink = 
       $set: { groupName, groupLink, enabled: true, updatedAt: now },
       // A group should see its first game as soon as it is registered. The
       // hourly delay is only used after a round has started or expired.
-      $setOnInsert: { groupId, nextGameAt: now, activeRound: null, createdAt: now },
+      $setOnInsert: { groupId, nextGameAt: nextExactHour(now), activeRound: null, createdAt: now },
     },
     { upsert: true },
   );
@@ -133,10 +144,12 @@ export async function startDueMiniGames({ db, telegram, logger = console }) {
   console.log(`[MiniGame] Due groups: ${due.length}`);
 
   for (const game of due) {
+    // Avoid bursting many Telegram API calls at once on small/free hosts.
+    if (due.indexOf(game) > 0) await new Promise((resolve) => setTimeout(resolve, GROUP_SEND_DELAY_MS));
     const word = chooseWord(game.lastWord || '');
     const claimed = await games.findOneAndUpdate(
       { _id: game._id, activeRound: null, nextGameAt: { $lte: now } },
-      { $set: { activeRound: { word, startedAt: now, expiresAt: new Date(now.getTime() + GAME_DURATION_MS) }, lastWord: word, nextGameAt: new Date(now.getTime() + GAME_INTERVAL_MS), updatedAt: now } },
+      { $set: { activeRound: { word, startedAt: now, expiresAt: new Date(now.getTime() + GAME_DURATION_MS) }, lastWord: word, nextGameAt: nextExactHour(now), updatedAt: now } },
       { returnDocument: 'after' },
     );
     if (!claimed?.activeRound) continue;
@@ -171,18 +184,38 @@ export async function startDueMiniGames({ db, telegram, logger = console }) {
         }
       }
 
-      logger.error?.(`Mini-game send failed for ${claimed.groupId}; retrying in 60 seconds:`, description);
-      await games.updateOne(
-        { _id: claimed._id },
-        {
-          $set: {
-            activeRound: null,
-            nextGameAt: new Date(Date.now() + SEND_RETRY_MS),
-            lastSendError: String(description),
-            updatedAt: new Date(),
+      const errorCode = Number(error?.response?.error_code);
+      const retryable = TELEGRAM_RETRY_CODES.has(errorCode) || /Bad Gateway|Service Unavailable|Gateway Timeout|network|ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND/i.test(descriptionText);
+      if (retryable) {
+        logger.error?.(`Mini-game send failed for ${claimed.groupId}; retrying in 60 seconds:`, description);
+        await games.updateOne(
+          { _id: claimed._id },
+          {
+            $set: {
+              activeRound: null,
+              nextGameAt: new Date(Date.now() + SEND_RETRY_MS),
+              lastSendError: String(description),
+              updatedAt: new Date(),
+            },
           },
-        },
-      );
+        );
+      } else {
+        // Non-transient Telegram errors (for example chat not found) should
+        // not cause an endless retry loop. Skip this round and keep the hourly
+        // schedule intact.
+        logger.error?.(`Mini-game send failed permanently for ${claimed.groupId}:`, description);
+        await games.updateOne(
+          { _id: claimed._id },
+          {
+            $set: {
+              activeRound: null,
+              nextGameAt: nextExactHour(new Date()),
+              lastSendError: String(description),
+              updatedAt: new Date(),
+            },
+          },
+        );
+      }
     }
   }
 }

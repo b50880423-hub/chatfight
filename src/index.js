@@ -1372,17 +1372,30 @@ async function start() {
         { $set: { enabled: false, updatedAt: new Date() } },
       );
     } else {
-      // Make existing active groups due immediately after deployment.
-      await database.collection('mini_game_groups').updateOne(
-        { groupId },
-        {
-          $set: {
-            nextGameAt: new Date(),
-            enabled: true,
-            updatedAt: new Date(),
+      // Keep mini-games aligned to exact clock hours after every deployment.
+      // If a round is already active, preserve it; otherwise schedule the next
+      // round for the next HH:00 boundary (for example 1:37 -> 2:00).
+      if (!registered?.activeRound) {
+        const now = new Date();
+        const nextHour = new Date(now);
+        nextHour.setMinutes(0, 0, 0);
+        nextHour.setHours(nextHour.getHours() + 1);
+        await database.collection('mini_game_groups').updateOne(
+          { groupId },
+          {
+            $set: {
+              nextGameAt: nextHour,
+              enabled: true,
+              updatedAt: now,
+            },
           },
-        },
-      );
+        );
+      } else {
+        await database.collection('mini_game_groups').updateOne(
+          { groupId },
+          { $set: { enabled: true, updatedAt: new Date() } },
+        );
+      }
     }
   }
 
@@ -1402,15 +1415,32 @@ async function start() {
     }
   };
 
-  // Start mini-game scheduler BEFORE Telegram polling
+  // Start Telegram first. Do not make mini-game API calls before Telegram
+  // has successfully completed getMe. Temporary Telegram 502/503/504 errors
+  // are retried with backoff instead of killing the Render process.
+  let launchAttempt = 0;
+  while (true) {
+    launchAttempt += 1;
+    try {
+      console.log(`[Telegram] Starting bot (attempt ${launchAttempt})...`);
+      await bot.launch();
+      console.log('Bot started');
+      break;
+    } catch (error) {
+      const code = error?.response?.error_code;
+      const description = String(error?.response?.description || error?.message || error);
+      const retryable = [429, 500, 502, 503, 504].includes(code) || /Bad Gateway|Service Unavailable|Gateway Timeout|network|ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND/i.test(description);
+      if (!retryable) throw error;
+      const delay = Math.min(30000, 5000 * Math.min(launchAttempt, 6));
+      console.error(`[Telegram] Startup failed (${code || 'network'}): ${description}. Retrying in ${Math.round(delay / 1000)}s...`);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+
+  // Only start the scheduler after Telegram is online.
   await runMiniGames();
   setInterval(runMiniGames, 15000);
-
   console.log('[MiniGame] Scheduler started');
-
-  await bot.launch();
-
-  console.log('Bot started');
 }
 
 start().catch((error) => {
