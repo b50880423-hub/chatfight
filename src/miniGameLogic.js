@@ -77,8 +77,17 @@ async function renderGameImage(word) {
   return sharp(Buffer.from(svg)).png().toBuffer();
 }
 
+function nextExactHour(now = new Date()) {
+  const next = new Date(now);
+  next.setMinutes(0, 0, 0);
+  next.setHours(next.getHours() + 1);
+  return next;
+}
+
 function nextHourFrom(now) {
-  return new Date(now.getTime() + GAME_INTERVAL_MS);
+  // Keep every round aligned to an exact clock hour (HH:00), not one hour
+  // from the moment the bot happened to start.
+  return nextExactHour(now);
 }
 
 export function getMiniGameConfig() {
@@ -106,7 +115,7 @@ export async function registerMiniGameGroup(db, groupId, groupName, groupLink = 
       $set: { groupName, groupLink, enabled: true, updatedAt: now },
       // A group should see its first game as soon as it is registered. The
       // hourly delay is only used after a round has started or expired.
-      $setOnInsert: { groupId, nextGameAt: now, activeRound: null, createdAt: now },
+      $setOnInsert: { groupId, nextGameAt: nextExactHour(now), activeRound: null, createdAt: now },
     },
     { upsert: true },
   );
@@ -136,7 +145,7 @@ export async function startDueMiniGames({ db, telegram, logger = console }) {
     const word = chooseWord(game.lastWord || '');
     const claimed = await games.findOneAndUpdate(
       { _id: game._id, activeRound: null, nextGameAt: { $lte: now } },
-      { $set: { activeRound: { word, startedAt: now, expiresAt: new Date(now.getTime() + GAME_DURATION_MS) }, lastWord: word, nextGameAt: new Date(now.getTime() + GAME_INTERVAL_MS), updatedAt: now } },
+      { $set: { activeRound: { word, startedAt: now, expiresAt: new Date(now.getTime() + GAME_DURATION_MS) }, lastWord: word, nextGameAt: nextExactHour(now), updatedAt: now } },
       { returnDocument: 'after' },
     );
     if (!claimed?.activeRound) continue;
