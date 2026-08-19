@@ -15,7 +15,7 @@ export function isBotCommandMessage(message) {
 }
 
 export function isCountableHumanMessage(message) {
-  return Boolean(message?.from?.id) && !isTelegramBotMessage(message) && !isBotCommandMessage(message);
+  return Boolean(message?.from?.id) && !isTelegramBotMessage(message);
 }
 
 export function getNextSpamCount(lastMessageAt, spamCount = 0, now = new Date()) {

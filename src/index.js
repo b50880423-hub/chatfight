@@ -448,6 +448,7 @@ async function checkSpamAndCount(ctx) {
   if (isActiveDate(newStatus.blockedUntil)) return;
 
   const spamCount = newStatus.spamCount || 0;
+  console.log(`[Rule 5] ${userId} message count: ${spamCount}/${RULE_5_MESSAGE_LIMIT}`);
 
   if (spamCount >= RULE_5_MESSAGE_LIMIT) {
     const blockedUntil = getRule5BlockUntil(now);
@@ -1327,8 +1328,9 @@ bot.on('message', async (ctx) => {
     ctx.chat.username ? `https://t.me/${ctx.chat.username}` : null,
   );
 
-  await handleMiniGameAnswer({ db: database, ctx });
+  // Rule 5 runs first so rapid user messages cannot be skipped by another handler.
   await checkSpamAndCount(ctx);
+  await handleMiniGameAnswer({ db: database, ctx });
 });
 
 async function start() {
