@@ -1,5 +1,6 @@
 import { Input } from 'telegraf';
 import sharp from 'sharp';
+import { retryTelegramCall } from './telegramRetry.js';
 
 const GAME_INTERVAL_MS = 60 * 60 * 1000;
 const GAME_DURATION_MS = 10 * 60 * 1000;
@@ -145,11 +146,11 @@ export async function startDueMiniGames({ db, telegram, logger = console }) {
     const caption = '⚡ Be the first to write the word shown in the photo to climb the mini-game leaderboard.\n\n⏱️ <b>Time remaining: 10 minutes</b>';
     try {
       const image = await renderGameImage(round.word);
-      await telegram.sendPhoto(claimed.groupId, Input.fromBuffer(image, 'chatfight-game.png'), {
+      await retryTelegramCall(() => telegram.sendPhoto(claimed.groupId, Input.fromBuffer(image, 'chatfight-game.png'), {
         caption,
         parse_mode: 'HTML',
         has_spoiler: true,
-      });
+      }), { label: 'Mini-game photo' });
     } catch (error) {
       const description = error?.response?.description || error?.message || error;
       const descriptionText = String(description);
@@ -158,7 +159,7 @@ export async function startDueMiniGames({ db, telegram, logger = console }) {
       // by sending the same round as text instead of retrying forever.
       if (descriptionText.toLowerCase().includes('not enough rights to send photos')) {
         try {
-          await telegram.sendMessage(claimed.groupId, caption, { parse_mode: 'HTML' });
+          await retryTelegramCall(() => telegram.sendMessage(claimed.groupId, caption, { parse_mode: 'HTML' }), { label: 'Mini-game text fallback' });
           await games.updateOne(
             { _id: claimed._id },
             { $set: { lastSendError: null } },
