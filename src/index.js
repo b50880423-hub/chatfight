@@ -1504,6 +1504,7 @@ async function start() {
   }, 15 * 1000);
 
   console.log('[AI Summary] Daily scheduler started for 00:00 IST');
+}
 
 start().catch((error) => {
   console.error('Failed to start bot', error);
