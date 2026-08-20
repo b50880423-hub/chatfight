@@ -49,7 +49,6 @@ function normalizeUsername(value = '') {
 }
 import { buildLoggerMessage, getLoggerChatId } from './logger.js';
 import { createHealthServer } from './health.js';
-import { ensureAISummaryIndexes, recordDailyMessage, runDueDailyAISummaries, isISTMidnightWindow } from './aiSummary.js';
 import {
   ensureMiniGameIndexes,
   registerMiniGameGroup,
@@ -138,7 +137,6 @@ async function ensureIndexes() {
   const groupStats = database.collection('group_stats');
   await groupStats.createIndex({ groupId: 1 }, { unique: true });
   await ensureMiniGameIndexes(database);
-  await ensureAISummaryIndexes(database);
 }
 
 const BAN_OPTIONS = {
@@ -1061,61 +1059,6 @@ bot.command('mytop', async (ctx) => {
   await sendOrEditMessage(ctx, message);
 });
 
-bot.command('setmessages', async (ctx) => {
-  if (!isOwner(ctx.from?.id)) {
-    await ctx.reply('Only the owner can use this command.');
-    return;
-  }
-
-  if (!ctx.chat || ctx.chat.type === 'private') {
-    await ctx.reply('Use this command inside the group where you want to set the message count.');
-    return;
-  }
-
-  const args = ctx.message.text.split(' ').slice(1).filter(Boolean);
-  if (args.length < 2 || !/^\d+$/.test(args[0]) || !/^\d+$/.test(args[1])) {
-    await ctx.reply('Usage: /setmessages <user_id> <message_count>');
-    return;
-  }
-
-  const userId = args[0];
-  const messageCount = Number(args[1]);
-  if (!Number.isSafeInteger(messageCount) || messageCount < 0) {
-    await ctx.reply('Message count must be a valid non-negative number.');
-    return;
-  }
-
-  const database = await connectDb();
-  const users = database.collection('group_users');
-  const groupId = ctx.chat.id.toString();
-  const existing = await users.findOne({ groupId, userId });
-
-  const now = new Date();
-  const update = {
-    $set: {
-      messageCount,
-      updatedAt: now,
-      groupId,
-      userId,
-      groupName: ctx.chat.title || ctx.chat.username || `Group ${groupId}`,
-    },
-  };
-
-  if (existing?.userName) {
-    update.$set.userName = existing.userName;
-  }
-
-  await users.updateOne({ groupId, userId }, update, { upsert: true });
-
-  const displayName = existing?.userName || `User ${userId}`;
-  await ctx.reply(
-    `✅ <b>Message count updated</b>\n\n` +
-    `👤 ${escapeHtml(displayName)}\n` +
-    `💬 Messages: <b>${messageCount.toLocaleString()}</b>`,
-    { parse_mode: 'HTML' },
-  );
-});
-
 bot.command('inspect', async (ctx) => {
   if (!isOwner(ctx.from?.id)) {
     await ctx.reply('Only the owner can use this command.');
@@ -1387,7 +1330,6 @@ bot.on('message', async (ctx) => {
 
   // Rule 5 runs first so rapid user messages cannot be skipped by another handler.
   await checkSpamAndCount(ctx);
-  await recordDailyMessage(database, ctx);
   await handleMiniGameAnswer({ db: database, ctx });
 });
 
@@ -1430,30 +1372,17 @@ async function start() {
         { $set: { enabled: false, updatedAt: new Date() } },
       );
     } else {
-      // Keep mini-games aligned to exact clock hours after every deployment.
-      // If a round is already active, preserve it; otherwise schedule the next
-      // round for the next HH:00 boundary (for example 1:37 -> 2:00).
-      if (!registered?.activeRound) {
-        const now = new Date();
-        const nextHour = new Date(now);
-        nextHour.setMinutes(0, 0, 0);
-        nextHour.setHours(nextHour.getHours() + 1);
-        await database.collection('mini_game_groups').updateOne(
-          { groupId },
-          {
-            $set: {
-              nextGameAt: nextHour,
-              enabled: true,
-              updatedAt: now,
-            },
+      // Make existing active groups due immediately after deployment.
+      await database.collection('mini_game_groups').updateOne(
+        { groupId },
+        {
+          $set: {
+            nextGameAt: new Date(),
+            enabled: true,
+            updatedAt: new Date(),
           },
-        );
-      } else {
-        await database.collection('mini_game_groups').updateOne(
-          { groupId },
-          { $set: { enabled: true, updatedAt: new Date() } },
-        );
-      }
+        },
+      );
     }
   }
 
@@ -1473,37 +1402,15 @@ async function start() {
     }
   };
 
-  // Connect Telegram first. Mini-games and AI summaries must not call Telegram
-  // before the bot is actually connected.
-  await bot.launch();
-  console.log('Bot started');
-
-  // Recover/start scheduled jobs only after Telegram is ready.
+  // Start mini-game scheduler BEFORE Telegram polling
   await runMiniGames();
   setInterval(runMiniGames, 15000);
+
   console.log('[MiniGame] Scheduler started');
 
-  const runAISummaries = async () => {
-    if (!process.env.GEMINI_API_KEY) {
-      console.warn('[AI Summary] GEMINI_API_KEY is not configured; daily AI summaries are disabled.');
-      return;
-    }
-    if (!isISTMidnightWindow(new Date(), 2)) return;
-    try {
-      await runDueDailyAISummaries({ db: database, telegram: bot.telegram, logger: console });
-    } catch (error) {
-      console.error('[AI Summary] Scheduler error:', error);
-    }
-  };
-  console.log('[AI Summary] Initializing scheduler...');
+  await bot.launch();
 
-  setInterval(() => {
-    runAISummaries().catch(err => {
-      console.error('[AI Summary] Scheduler error:', err);
-    });
-  }, 15 * 1000);
-
-  console.log('[AI Summary] Daily scheduler started for 00:00 IST');
+  console.log('Bot started');
 }
 
 start().catch((error) => {
