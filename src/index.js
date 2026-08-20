@@ -49,6 +49,7 @@ function normalizeUsername(value = '') {
 }
 import { buildLoggerMessage, getLoggerChatId } from './logger.js';
 import { createHealthServer } from './health.js';
+import { ensureAISummaryIndexes, recordDailyMessage, runDueDailyAISummaries, isISTMidnightWindow } from './aiSummary.js';
 import {
   ensureMiniGameIndexes,
   registerMiniGameGroup,
@@ -137,6 +138,7 @@ async function ensureIndexes() {
   const groupStats = database.collection('group_stats');
   await groupStats.createIndex({ groupId: 1 }, { unique: true });
   await ensureMiniGameIndexes(database);
+  await ensureAISummaryIndexes(database);
 }
 
 const BAN_OPTIONS = {
@@ -1385,6 +1387,7 @@ bot.on('message', async (ctx) => {
 
   // Rule 5 runs first so rapid user messages cannot be skipped by another handler.
   await checkSpamAndCount(ctx);
+  await recordDailyMessage(database, ctx);
   await handleMiniGameAnswer({ db: database, ctx });
 });
 
@@ -1470,15 +1473,31 @@ async function start() {
     }
   };
 
-  // Start mini-game scheduler BEFORE Telegram polling
+  // Connect Telegram first. Mini-games and AI summaries must not call Telegram
+  // before the bot is actually connected.
+  await bot.launch();
+  console.log('Bot started');
+
+  // Recover/start scheduled jobs only after Telegram is ready.
   await runMiniGames();
   setInterval(runMiniGames, 15000);
-
   console.log('[MiniGame] Scheduler started');
 
-  await bot.launch();
-
-  console.log('Bot started');
+  const runAISummaries = async () => {
+    if (!process.env.OPENAI_API_KEY) {
+      console.warn('[AI Summary] OPENAI_API_KEY is not configured; daily AI summaries are disabled.');
+      return;
+    }
+    if (!isISTMidnightWindow(new Date(), 2)) return;
+    try {
+      await runDueDailyAISummaries({ db: database, telegram: bot.telegram, logger: console });
+    } catch (error) {
+      console.error('[AI Summary] Scheduler error:', error);
+    }
+  };
+  await runAISummaries();
+  setInterval(runAISummaries, 15 * 1000);
+  console.log('[AI Summary] Daily scheduler started for 00:00 IST');
 }
 
 start().catch((error) => {
