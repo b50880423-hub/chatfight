@@ -1484,8 +1484,8 @@ async function start() {
   console.log('[MiniGame] Scheduler started');
 
   const runAISummaries = async () => {
-    if (!process.env.OPENAI_API_KEY) {
-      console.warn('[AI Summary] OPENAI_API_KEY is not configured; daily AI summaries are disabled.');
+    if (!process.env.GEMINI_API_KEY) {
+      console.warn('[AI Summary] GEMINI_API_KEY is not configured; daily AI summaries are disabled.');
       return;
     }
     if (!isISTMidnightWindow(new Date(), 2)) return;
