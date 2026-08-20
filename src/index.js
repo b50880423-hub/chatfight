@@ -1059,6 +1059,61 @@ bot.command('mytop', async (ctx) => {
   await sendOrEditMessage(ctx, message);
 });
 
+bot.command('setmessages', async (ctx) => {
+  if (!isOwner(ctx.from?.id)) {
+    await ctx.reply('Only the owner can use this command.');
+    return;
+  }
+
+  if (!ctx.chat || ctx.chat.type === 'private') {
+    await ctx.reply('Use this command inside the group where you want to set the message count.');
+    return;
+  }
+
+  const args = ctx.message.text.split(' ').slice(1).filter(Boolean);
+  if (args.length < 2 || !/^\d+$/.test(args[0]) || !/^\d+$/.test(args[1])) {
+    await ctx.reply('Usage: /setmessages <user_id> <message_count>');
+    return;
+  }
+
+  const userId = args[0];
+  const messageCount = Number(args[1]);
+  if (!Number.isSafeInteger(messageCount) || messageCount < 0) {
+    await ctx.reply('Message count must be a valid non-negative number.');
+    return;
+  }
+
+  const database = await connectDb();
+  const users = database.collection('group_users');
+  const groupId = ctx.chat.id.toString();
+  const existing = await users.findOne({ groupId, userId });
+
+  const now = new Date();
+  const update = {
+    $set: {
+      messageCount,
+      updatedAt: now,
+      groupId,
+      userId,
+      groupName: ctx.chat.title || ctx.chat.username || `Group ${groupId}`,
+    },
+  };
+
+  if (existing?.userName) {
+    update.$set.userName = existing.userName;
+  }
+
+  await users.updateOne({ groupId, userId }, update, { upsert: true });
+
+  const displayName = existing?.userName || `User ${userId}`;
+  await ctx.reply(
+    `✅ <b>Message count updated</b>\n\n` +
+    `👤 ${escapeHtml(displayName)}\n` +
+    `💬 Messages: <b>${messageCount.toLocaleString()}</b>`,
+    { parse_mode: 'HTML' },
+  );
+});
+
 bot.command('inspect', async (ctx) => {
   if (!isOwner(ctx.from?.id)) {
     await ctx.reply('Only the owner can use this command.');
