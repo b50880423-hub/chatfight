@@ -4,8 +4,6 @@ import sharp from 'sharp';
 const GAME_INTERVAL_MS = 60 * 60 * 1000;
 const GAME_DURATION_MS = 10 * 60 * 1000;
 const SEND_RETRY_MS = 60 * 1000;
-const TELEGRAM_SEND_GAP_MS = 700;
-const TELEGRAM_RETRY_MAX_MS = 30 * 1000;
 
 const GAME_THEMES = [
   { bg: '#0f172a', panel: '#1e293b', accent: '#38bdf8', glow: '#7dd3fc' },
@@ -130,29 +128,6 @@ function chooseWord(previousWord = '') {
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
-async function sendTelegramWithRetry(sendFn, logger = console, label = 'Telegram send') {
-  let attempt = 0;
-  while (true) {
-    attempt += 1;
-    try {
-      return await sendFn();
-    } catch (error) {
-      const code = error?.response?.error_code;
-      const description = error?.response?.description || error?.message || String(error);
-      const retryable = [429, 502, 503, 504].includes(code) ||
-        /bad gateway|service unavailable|gateway timeout|econnreset|etimedout|enotfound|network/i.test(String(description));
-      if (!retryable || attempt >= 6) throw error;
-
-      const retryAfter = Number(error?.response?.parameters?.retry_after);
-      const delay = retryAfter > 0
-        ? retryAfter * 1000
-        : Math.min(TELEGRAM_RETRY_MAX_MS, 3000 * attempt);
-      logger.warn?.(`[MiniGame] ${label} failed (${code || 'network'}); retrying in ${Math.round(delay / 1000)}s...`);
-      await new Promise((resolve) => setTimeout(resolve, delay));
-    }
-  }
-}
-
 export async function startDueMiniGames({ db, telegram, logger = console }) {
   console.log("[MiniGame] startDueMiniGames() CALLED");
   
@@ -166,10 +141,7 @@ export async function startDueMiniGames({ db, telegram, logger = console }) {
 
   console.log(`[MiniGame] Due groups: ${due.length}`);
 
-  for (let index = 0; index < due.length; index += 1) {
-    const game = due[index];
-    if (index > 0) await new Promise((resolve) => setTimeout(resolve, TELEGRAM_SEND_GAP_MS));
-
+  for (const game of due) {
     const word = chooseWord(game.lastWord || '');
     const claimed = await games.findOneAndUpdate(
       { _id: game._id, activeRound: null, nextGameAt: { $lte: now } },
@@ -182,11 +154,11 @@ export async function startDueMiniGames({ db, telegram, logger = console }) {
     const caption = '⚡ Be the first to write the word shown in the photo to climb the mini-game leaderboard.\n\n⏱️ <b>Time remaining: 10 minutes</b>';
     try {
       const image = await renderGameImage(round.word);
-      await sendTelegramWithRetry(() => telegram.sendPhoto(claimed.groupId, Input.fromBuffer(image, 'chatfight-game.png'), {
+      await telegram.sendPhoto(claimed.groupId, Input.fromBuffer(image, 'chatfight-game.png'), {
         caption,
         parse_mode: 'HTML',
         has_spoiler: true,
-      }), logger, `photo send to ${claimed.groupId}`);
+      });
     } catch (error) {
       const description = error?.response?.description || error?.message || error;
       const descriptionText = String(description);
@@ -195,7 +167,7 @@ export async function startDueMiniGames({ db, telegram, logger = console }) {
       // by sending the same round as text instead of retrying forever.
       if (descriptionText.toLowerCase().includes('not enough rights to send photos')) {
         try {
-          await sendTelegramWithRetry(() => telegram.sendMessage(claimed.groupId, caption, { parse_mode: 'HTML' }), logger, `text fallback to ${claimed.groupId}`);
+          await telegram.sendMessage(claimed.groupId, caption, { parse_mode: 'HTML' });
           await games.updateOne(
             { _id: claimed._id },
             { $set: { lastSendError: null } },
