@@ -1082,6 +1082,48 @@ bot.command('inspect', async (ctx) => {
   await ctx.reply(['Owner inspection:', ...lines].join('\n'));
 });
 
+bot.command('setmessages', async (ctx) => {
+  if (!isOwner(ctx.from?.id)) {
+    await ctx.reply('Only the owner can use this command.');
+    return;
+  }
+
+  if (!ctx.chat || ctx.chat.type === 'private') {
+    await ctx.reply('Use /setmessages in the group where you want to set the message count.');
+    return;
+  }
+
+  const parts = String(ctx.message?.text || '').trim().split(/\s+/);
+  if (parts.length < 3) {
+    await ctx.reply('Usage: /setmessages USER_ID COUNT\nExample: /setmessages 123456789 5000');
+    return;
+  }
+
+  const userId = String(parts[1]).replace(/^@/, '');
+  const count = Number(parts[2]);
+  if (!/^\d+$/.test(userId) || !Number.isSafeInteger(count) || count < 0) {
+    await ctx.reply('Invalid input. Use: /setmessages USER_ID COUNT\nExample: /setmessages 123456789 5000');
+    return;
+  }
+
+  const groupId = ctx.chat.id.toString();
+  const database = await connectDb();
+  const users = database.collection('group_users');
+  const existing = await users.findOne({ groupId, userId });
+
+  if (!existing) {
+    await ctx.reply(`No ranking record found for user ${userId} in this group. Have them send at least one message first, then run the command again.`);
+    return;
+  }
+
+  await users.updateOne(
+    { groupId, userId },
+    { $set: { messageCount: count, updatedAt: new Date() } },
+  );
+
+  await ctx.reply(`✅ Message count updated.\nUser: ${existing.displayName || existing.userName || userId}\nMessages: ${count.toLocaleString('en-IN')}`);
+});
+
 bot.command('profile', async (ctx) => {
   if (await maybeRejectUser(ctx, ctx.chat.id.toString())) return;
   const groupId = ctx.chat.id.toString();
@@ -1372,21 +1414,65 @@ async function start() {
         { $set: { enabled: false, updatedAt: new Date() } },
       );
     } else {
-      // Make existing active groups due immediately after deployment.
-      await database.collection('mini_game_groups').updateOne(
-        { groupId },
-        {
-          $set: {
-            nextGameAt: new Date(),
-            enabled: true,
-            updatedAt: new Date(),
+      // Keep mini-games aligned to exact clock hours after every deployment.
+      // If a round is already active, preserve it; otherwise schedule the next
+      // round for the next HH:00 boundary (for example 1:37 -> 2:00).
+      if (!registered?.activeRound) {
+        const now = new Date();
+        const nextHour = new Date(now);
+        nextHour.setMinutes(0, 0, 0);
+        nextHour.setHours(nextHour.getHours() + 1);
+        await database.collection('mini_game_groups').updateOne(
+          { groupId },
+          {
+            $set: {
+              nextGameAt: nextHour,
+              enabled: true,
+              updatedAt: now,
+            },
           },
-        },
-      );
+        );
+      } else {
+        await database.collection('mini_game_groups').updateOne(
+          { groupId },
+          { $set: { enabled: true, updatedAt: new Date() } },
+        );
+      }
     }
   }
 
   console.log(`[MiniGame] Startup groups scheduled: ${knownGroups.length}`);
+
+  // Telegram must be connected BEFORE any Mini Game scheduler starts.
+  // Otherwise the scheduler can try to call Telegram while bot.launch() is
+  // still failing its initial getMe request (for example during a 502).
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  const launchTelegramWithRetry = async () => {
+    let attempt = 0;
+    while (true) {
+      attempt += 1;
+      try {
+        console.log(`[Telegram] Connecting to Telegram (attempt ${attempt})...`);
+        await bot.launch();
+        console.log('[Telegram] Connected successfully');
+        return;
+      } catch (error) {
+        const code = error?.response?.error_code;
+        const description = error?.response?.description || error?.message || String(error);
+        const retryable = [502, 503, 504].includes(code) ||
+          /bad gateway|service unavailable|gateway timeout|econnreset|etimedout|enotfound|network/i.test(String(description));
+
+        if (!retryable) throw error;
+
+        const delay = Math.min(30000, 5000 * Math.max(1, attempt));
+        console.error(`[Telegram] Connection failed (${code || 'network'}): ${description}. Retrying in ${Math.round(delay / 1000)}s...`);
+        await sleep(delay);
+      }
+    }
+  };
+
+  await launchTelegramWithRetry();
 
   const runMiniGames = async () => {
     try {
@@ -1402,14 +1488,11 @@ async function start() {
     }
   };
 
-  // Start mini-game scheduler BEFORE Telegram polling
+  // Start Mini Games ONLY after Telegram polling has connected successfully.
   await runMiniGames();
   setInterval(runMiniGames, 15000);
 
   console.log('[MiniGame] Scheduler started');
-
-  await bot.launch();
-
   console.log('Bot started');
 }
 
