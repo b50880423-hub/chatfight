@@ -22,6 +22,43 @@ const WORDS = [
   'MAGICIAN','OCEAN','PENGUIN','ROCKET','STARDUST','TORNADO','VELVET','WARRIOR',
 ];
 
+
+const COUNTRIES = [
+  { name: 'Spain', flag: '🇪🇸' }, { name: 'India', flag: '🇮🇳' },
+  { name: 'Japan', flag: '🇯🇵' }, { name: 'Brazil', flag: '🇧🇷' },
+  { name: 'Canada', flag: '🇨🇦' }, { name: 'Germany', flag: '🇩🇪' },
+  { name: 'France', flag: '🇫🇷' }, { name: 'Italy', flag: '🇮🇹' },
+  { name: 'Australia', flag: '🇦🇺' }, { name: 'Mexico', flag: '🇲🇽' },
+  { name: 'Argentina', flag: '🇦🇷' }, { name: 'South Korea', flag: '🇰🇷' },
+  { name: 'United Kingdom', flag: '🇬🇧' }, { name: 'United States', flag: '🇺🇸' },
+  { name: 'Portugal', flag: '🇵🇹' }, { name: 'Thailand', flag: '🇹🇭' },
+];
+
+const EMOJI_GUESSES = [
+  { clue: '🍎📱', answer: 'Apple' }, { clue: '🦁👑', answer: 'Lion King' },
+  { clue: '🌍🌙', answer: 'Earth Moon' }, { clue: '🚗💨', answer: 'Racing' },
+  { clue: '🔥🧊', answer: 'Fire and Ice' }, { clue: '🌧️☀️', answer: 'Rainbow' },
+  { clue: '🐼🎋', answer: 'Panda' }, { clue: '🚀🌌', answer: 'Space' },
+  { clue: '⚽🏆', answer: 'Football' }, { clue: '🎸🎵', answer: 'Music' },
+  { clue: '👑💎', answer: 'Royalty' }, { clue: '🍕🇮🇹', answer: 'Italy' },
+];
+
+const EMOJI_OPTION_POOL = [...new Set(EMOJI_GUESSES.map((game) => game.answer))];
+
+function shuffle(items) {
+  const copy = [...items];
+  for (let i = copy.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
+
+function buildOptions(answer, pool, count) {
+  const wrong = shuffle(pool.filter((item) => item !== answer)).slice(0, count - 1);
+  return shuffle([answer, ...wrong]);
+}
+
 function normalizeAnswer(value = '') {
   return String(value).trim().normalize('NFKC').toLowerCase();
 }
@@ -128,6 +165,74 @@ function chooseWord(previousWord = '') {
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
+function chooseRound(previousRound = null) {
+  const previousType = previousRound?.type || '';
+  const types = ['word', 'flag', 'emoji'];
+  const typePool = types.filter((type) => type !== previousType);
+  const type = typePool[Math.floor(Math.random() * typePool.length)];
+
+  if (type === 'flag') {
+    const country = COUNTRIES[Math.floor(Math.random() * COUNTRIES.length)];
+    return {
+      type,
+      clue: country.flag,
+      answer: country.name,
+      options: buildOptions(country.name, COUNTRIES.map((item) => item.name), 4),
+    };
+  }
+
+  if (type === 'emoji') {
+    const game = EMOJI_GUESSES[Math.floor(Math.random() * EMOJI_GUESSES.length)];
+    return {
+      type,
+      clue: game.clue,
+      answer: game.answer,
+      options: buildOptions(game.answer, EMOJI_OPTION_POOL, 9),
+    };
+  }
+
+  const word = chooseWord(previousRound?.answer || '');
+  return { type: 'word', clue: word, answer: word, options: [] };
+}
+
+function miniGameKeyboard(round) {
+  if (round.type === 'flag') {
+    return {
+      inline_keyboard: [
+        round.options.slice(0, 2).map((text, index) => ({ text, callback_data: `mg:${new Date(round.startedAt).getTime().toString(36)}:${index}` })),
+        round.options.slice(2, 4).map((text, index) => ({ text, callback_data: `mg:${new Date(round.startedAt).getTime().toString(36)}:${index + 2}` })),
+      ],
+    };
+  }
+
+  if (round.type === 'emoji') {
+    return {
+      inline_keyboard: [0, 1, 2].map((row) => round.options.slice(row * 3, row * 3 + 3).map((text, column) => ({
+        text,
+        callback_data: `mg:${new Date(round.startedAt).getTime().toString(36)}:${row * 3 + column}`,
+      }))),
+    };
+  }
+
+  return undefined;
+}
+
+function roundCaption(round) {
+  if (round.type === 'flag') {
+    return `🌍 <b>GUESS THE COUNTRY FROM ITS FLAG AND SELECT THE CORRECT OPTION!</b>
+
+⏱️ <b>Time remaining: 10 minutes</b>`;
+  }
+  if (round.type === 'emoji') {
+    return `🤔 <b>GUESS THE ANSWER FROM THE EMOJIS AND SELECT THE CORRECT OPTION!</b>
+
+⏱️ <b>Time remaining: 10 minutes</b>`;
+  }
+  return `⚡ Be the first to write the word shown in the photo to climb the mini-game leaderboard.
+
+⏱️ <b>Time remaining: 10 minutes</b>`;
+}
+
 export async function startDueMiniGames({ db, telegram, logger = console }) {
   console.log("[MiniGame] startDueMiniGames() CALLED");
   
@@ -142,21 +247,27 @@ export async function startDueMiniGames({ db, telegram, logger = console }) {
   console.log(`[MiniGame] Due groups: ${due.length}`);
 
   for (const game of due) {
-    const word = chooseWord(game.lastWord || '');
+    const chosen = chooseRound(game.lastRound || null);
+    const round = {
+      ...chosen,
+      startedAt: now,
+      expiresAt: new Date(now.getTime() + GAME_DURATION_MS),
+    };
     const claimed = await games.findOneAndUpdate(
       { _id: game._id, activeRound: null, nextGameAt: { $lte: now } },
-      { $set: { activeRound: { word, startedAt: now, expiresAt: new Date(now.getTime() + GAME_DURATION_MS) }, lastWord: word, nextGameAt: nextExactHour(now), updatedAt: now } },
+      { $set: { activeRound: round, lastRound: { type: round.type, answer: round.answer }, nextGameAt: nextExactHour(now), updatedAt: now } },
       { returnDocument: 'after' },
     );
     if (!claimed?.activeRound) continue;
 
-    const round = claimed.activeRound;
-    const caption = '⚡ Be the first to write the word shown in the photo to climb the mini-game leaderboard.\n\n⏱️ <b>Time remaining: 10 minutes</b>';
+    const activeRound = claimed.activeRound;
+    const caption = roundCaption(activeRound);
     try {
-      const image = await renderGameImage(round.word);
+      const image = await renderGameImage(activeRound.clue || activeRound.answer);
       await telegram.sendPhoto(claimed.groupId, Input.fromBuffer(image, 'chatfight-game.png'), {
         caption,
         parse_mode: 'HTML',
+        reply_markup: miniGameKeyboard(activeRound),
         has_spoiler: true,
       });
     } catch (error) {
@@ -235,7 +346,10 @@ export async function handleMiniGameAnswer({ db, ctx }) {
     return false;
   }
 
-  if (normalizeAnswer(message.text) !== normalizeAnswer(round.word)) return false;
+  // Typed answers are only for the original word game. Flag and emoji games
+  // are answered through their inline buttons.
+  if (round.type && round.type !== 'word') return false;
+  if (normalizeAnswer(message.text) !== normalizeAnswer(round.answer || round.word)) return false;
 
   const claimed = await games.findOneAndUpdate(
     { _id: game._id, 'activeRound.startedAt': round.startedAt },
@@ -289,6 +403,70 @@ export async function handleMiniGameAnswer({ db, ctx }) {
     `⚡ Answered in <b>${seconds}s</b>\n` +
     `🎯 Earned <b>${points} points</b>`,
     { parse_mode: 'HTML', reply_to_message_id: message.message_id },
+  );
+  return true;
+}
+
+
+export async function handleMiniGameButtonAnswer({ db, ctx }) {
+  const chat = ctx.chat;
+  const callback = ctx.callbackQuery;
+  if (!chat || chat.type === 'private' || !callback?.data || !ctx.from) return false;
+
+  const match = /^mg:([0-9a-z]+):(\d+)$/.exec(callback.data);
+  if (!match) return false;
+
+  const startedAtMs = parseInt(match[1], 36);
+  const optionIndex = Number(match[2]);
+  if (!Number.isFinite(startedAtMs) || !Number.isInteger(optionIndex)) return false;
+
+  const games = db.collection('mini_game_groups');
+  const game = await games.findOne({ groupId: chat.id.toString(), activeRound: { $ne: null } });
+  const round = game?.activeRound;
+  if (!round || new Date(round.startedAt).getTime() !== startedAtMs) return false;
+
+  const now = new Date();
+  if (now >= new Date(round.expiresAt)) return false;
+  if (!Array.isArray(round.options) || optionIndex < 0 || optionIndex >= round.options.length) return false;
+
+  const selected = round.options[optionIndex];
+  if (normalizeAnswer(selected) !== normalizeAnswer(round.answer)) {
+    try { await ctx.answerCbQuery('❌ Wrong answer, try again!'); } catch {}
+    return true;
+  }
+
+  const claimed = await games.findOneAndUpdate(
+    { _id: game._id, 'activeRound.startedAt': round.startedAt },
+    { $set: { activeRound: null, lastWinnerAt: now, updatedAt: now } },
+    { returnDocument: 'before' },
+  );
+  if (!claimed?.activeRound) return true;
+
+  const elapsedMs = Math.max(0, now.getTime() - new Date(round.startedAt).getTime());
+  const points = pointsForElapsedMs(elapsedMs);
+  const scores = db.collection('mini_game_scores');
+  const userId = ctx.from.id.toString();
+  const groupId = chat.id.toString();
+  const name = displayName(ctx.from);
+  const username = ctx.from.username || '';
+
+  await scores.updateOne(
+    { groupId, userId },
+    {
+      $inc: { points, wins: 1 },
+      $set: { displayName: name, username, updatedAt: now },
+      $setOnInsert: { groupId, userId, createdAt: now },
+    },
+    { upsert: true },
+  );
+
+  try { await ctx.answerCbQuery('🏆 Correct! You were the fastest!'); } catch {}
+  const seconds = Math.floor(elapsedMs / 1000);
+  await ctx.reply(
+    `🏆 ${userLink(ctx.from)} was the fastest!\n\n` +
+    `⚡ Answered in <b>${seconds}s</b>\n` +
+    `🎯 Earned <b>${points} points</b>`,
+    { parse_mode: 'HTML' },
   );
   return true;
 }
