@@ -94,8 +94,9 @@ function userLink(from) {
   return `<a href="tg://user?id=${from.id}">${name}</a>`;
 }
 
-async function renderGameImage(word) {
-  const safe = escapeHtml(word);
+async function renderGameImage(clue, type = 'word') {
+  const safe = escapeHtml(clue);
+  const instruction = type === 'flag' ? 'GUESS THE COUNTRY' : type === 'emoji' ? 'GUESS THE EMOJIS' : 'TYPE THE WORD';
   const theme = GAME_THEMES[Math.floor(Math.random() * GAME_THEMES.length)];
   const svg = `<?xml version="1.0" encoding="UTF-8"?>
   <svg width="1000" height="650" xmlns="http://www.w3.org/2000/svg">
@@ -109,7 +110,7 @@ async function renderGameImage(word) {
     <rect x="35" y="35" width="930" height="580" rx="38" fill="none" stroke="${theme.accent}" stroke-width="3" opacity="0.8"/>
     <text x="500" y="105" text-anchor="middle" font-family="Arial, sans-serif" font-size="28" font-weight="700" fill="${theme.glow}" letter-spacing="6">CHATFIGHT • MINI GAME</text>
     <text x="500" y="330" text-anchor="middle" dominant-baseline="middle" font-family="Arial, sans-serif" font-size="92" font-weight="900" fill="white" letter-spacing="8" filter="url(#glow)">${safe}</text>
-    <text x="500" y="535" text-anchor="middle" font-family="Arial, sans-serif" font-size="30" font-weight="700" fill="${theme.glow}" letter-spacing="3">TYPE THE WORD</text>
+    <text x="500" y="535" text-anchor="middle" font-family="Arial, sans-serif" font-size="30" font-weight="700" fill="${theme.glow}" letter-spacing="3">${instruction}</text>
   </svg>`;
   return sharp(Buffer.from(svg)).png().toBuffer();
 }
@@ -168,8 +169,10 @@ function chooseWord(previousWord = '') {
 function chooseRound(previousRound = null) {
   const previousType = previousRound?.type || '';
   const types = ['word', 'flag', 'emoji'];
-  const typePool = types.filter((type) => type !== previousType);
-  const type = typePool[Math.floor(Math.random() * typePool.length)];
+  // Use a guaranteed rotation so every game type appears regularly.
+  // This avoids several Word games appearing while the random generator is unlucky.
+  const previousIndex = types.indexOf(previousType);
+  const type = types[(previousIndex + 1 + types.length) % types.length];
 
   if (type === 'flag') {
     const country = COUNTRIES[Math.floor(Math.random() * COUNTRIES.length)];
@@ -263,7 +266,7 @@ export async function startDueMiniGames({ db, telegram, logger = console }) {
     const activeRound = claimed.activeRound;
     const caption = roundCaption(activeRound);
     try {
-      const image = await renderGameImage(activeRound.clue || activeRound.answer);
+      const image = await renderGameImage(activeRound.clue || activeRound.answer, activeRound.type || 'word');
       await telegram.sendPhoto(claimed.groupId, Input.fromBuffer(image, 'chatfight-game.png'), {
         caption,
         parse_mode: 'HTML',
@@ -278,7 +281,7 @@ export async function startDueMiniGames({ db, telegram, logger = console }) {
       // by sending the same round as text instead of retrying forever.
       if (descriptionText.toLowerCase().includes('not enough rights to send photos')) {
         try {
-          await telegram.sendMessage(claimed.groupId, caption, { parse_mode: 'HTML' });
+          await telegram.sendMessage(claimed.groupId, `${caption}\n\n<b>${escapeHtml(activeRound.clue || activeRound.answer)}</b>`, { parse_mode: 'HTML', reply_markup: miniGameKeyboard(activeRound) });
           await games.updateOne(
             { _id: claimed._id },
             { $set: { lastSendError: null } },
