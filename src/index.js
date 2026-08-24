@@ -55,6 +55,7 @@ import {
   startDueMiniGames,
   expireMiniGames,
   handleMiniGameAnswer,
+  handleMiniGameButtonAnswer,
   getMiniGameLeaderboard,
   formatMiniGameLeaderboard,
   miniGameLeaderboardKeyboard,
@@ -1217,6 +1218,17 @@ bot.action('welcome:profile', async (ctx) => {
   const profilePhoto = await getTelegramProfilePhoto(userId);
   const imageBuffer = profilePhoto || await generateProfileImage(profileData.profile, profileData.rank, profileData.totalUsers, contextName);
   await sendPhotoThenText(ctx, imageBuffer, message);
+});
+
+bot.action(/^mg:[0-9a-z]+:\d+$/, async (ctx) => {
+  const database = await connectDb();
+  const groupId = ctx.chat?.type === 'private' ? null : ctx.chat?.id?.toString();
+  if (!groupId) {
+    await safeAnswerCbQuery(ctx, 'Mini-games are available in group chats.');
+    return;
+  }
+  if (await maybeRejectUser(ctx, groupId)) return;
+  await handleMiniGameButtonAnswer({ db: database, ctx });
 });
 
 bot.action(/minigame_lb:(chat|global)/, async (ctx) => {
