@@ -24,14 +24,14 @@ const WORDS = [
 
 
 const COUNTRIES = [
-  { name: 'Spain', flag: '🇪🇸' }, { name: 'India', flag: '🇮🇳' },
-  { name: 'Japan', flag: '🇯🇵' }, { name: 'Brazil', flag: '🇧🇷' },
-  { name: 'Canada', flag: '🇨🇦' }, { name: 'Germany', flag: '🇩🇪' },
-  { name: 'France', flag: '🇫🇷' }, { name: 'Italy', flag: '🇮🇹' },
-  { name: 'Australia', flag: '🇦🇺' }, { name: 'Mexico', flag: '🇲🇽' },
-  { name: 'Argentina', flag: '🇦🇷' }, { name: 'South Korea', flag: '🇰🇷' },
-  { name: 'United Kingdom', flag: '🇬🇧' }, { name: 'United States', flag: '🇺🇸' },
-  { name: 'Portugal', flag: '🇵🇹' }, { name: 'Thailand', flag: '🇹🇭' },
+  { name: 'Spain', flag: '🇪🇸', code: 'es' }, { name: 'India', flag: '🇮🇳', code: 'in' },
+  { name: 'Japan', flag: '🇯🇵', code: 'jp' }, { name: 'Brazil', flag: '🇧🇷', code: 'br' },
+  { name: 'Canada', flag: '🇨🇦', code: 'ca' }, { name: 'Germany', flag: '🇩🇪', code: 'de' },
+  { name: 'France', flag: '🇫🇷', code: 'fr' }, { name: 'Italy', flag: '🇮🇹', code: 'it' },
+  { name: 'Australia', flag: '🇦🇺', code: 'au' }, { name: 'Mexico', flag: '🇲🇽', code: 'mx' },
+  { name: 'Argentina', flag: '🇦🇷', code: 'ar' }, { name: 'South Korea', flag: '🇰🇷', code: 'kr' },
+  { name: 'United Kingdom', flag: '🇬🇧', code: 'gb' }, { name: 'United States', flag: '🇺🇸', code: 'us' },
+  { name: 'Portugal', flag: '🇵🇹', code: 'pt' }, { name: 'Thailand', flag: '🇹🇭', code: 'th' },
 ];
 
 const EMOJI_GUESSES = [
@@ -94,10 +94,67 @@ function userLink(from) {
   return `<a href="tg://user?id=${from.id}">${name}</a>`;
 }
 
-async function renderGameImage(clue, type = 'word') {
+// Linux/Heroku does not reliably provide a color emoji font, so emoji can
+// appear as empty boxes when Sharp renders SVG text. Use real PNG assets for
+// both country flags and emoji clues instead of depending on server fonts.
+const flagImageCache = new Map();
+const emojiImageCache = new Map();
+
+async function fetchImage(url, cache, cacheKey) {
+  if (cache.has(cacheKey)) return cache.get(cacheKey);
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!response.ok) throw new Error(`Image download failed: ${response.status}`);
+    const image = Buffer.from(await response.arrayBuffer());
+    cache.set(cacheKey, image);
+    return image;
+  } catch (error) {
+    console.warn(`[MiniGame] Could not load image ${cacheKey}:`, error?.message || error);
+    return null;
+  }
+}
+
+async function getFlagImage(countryCode) {
+  const code = String(countryCode || '').toLowerCase();
+  if (!code) return null;
+  return fetchImage(`https://flagcdn.com/w320/${code}.png`, flagImageCache, code);
+}
+
+function splitEmojiGraphemes(value = '') {
+  if (typeof Intl?.Segmenter === 'function') {
+    return [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(String(value))]
+      .map((item) => item.segment)
+      .filter(Boolean);
+  }
+  return Array.from(String(value));
+}
+
+function emojiCodepointName(emoji) {
+  // Twemoji filenames omit variation selectors but preserve ZWJ sequences.
+  return Array.from(String(emoji))
+    .map((char) => char.codePointAt(0).toString(16))
+    .filter((code) => code !== 'fe0f')
+    .join('-');
+}
+
+async function getEmojiImage(emoji) {
+  const code = emojiCodepointName(emoji);
+  if (!code) return null;
+  return fetchImage(
+    `https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.1.2/72x72/${code}.png`,
+    emojiImageCache,
+    code,
+  );
+}
+
+async function renderGameImage(clue, type = 'word', flagCode = '') {
   const safe = escapeHtml(clue);
   const instruction = type === 'flag' ? 'GUESS THE COUNTRY' : type === 'emoji' ? 'GUESS THE EMOJIS' : 'TYPE THE WORD';
   const theme = GAME_THEMES[Math.floor(Math.random() * GAME_THEMES.length)];
+  const clueMarkup = (type === 'flag' || type === 'emoji')
+    ? ''
+    : `<text x="500" y="330" text-anchor="middle" dominant-baseline="middle" font-family="Arial, sans-serif" font-size="92" font-weight="900" fill="white" letter-spacing="8" filter="url(#glow)">${safe}</text>`;
+
   const svg = `<?xml version="1.0" encoding="UTF-8"?>
   <svg width="1000" height="650" xmlns="http://www.w3.org/2000/svg">
     <defs>
@@ -109,10 +166,49 @@ async function renderGameImage(clue, type = 'word') {
     <circle cx="900" cy="560" r="110" fill="${theme.glow}" opacity="0.10"/>
     <rect x="35" y="35" width="930" height="580" rx="38" fill="none" stroke="${theme.accent}" stroke-width="3" opacity="0.8"/>
     <text x="500" y="105" text-anchor="middle" font-family="Arial, sans-serif" font-size="28" font-weight="700" fill="${theme.glow}" letter-spacing="6">CHATFIGHT • MINI GAME</text>
-    <text x="500" y="330" text-anchor="middle" dominant-baseline="middle" font-family="Arial, sans-serif" font-size="92" font-weight="900" fill="white" letter-spacing="8" filter="url(#glow)">${safe}</text>
+    ${clueMarkup}
     <text x="500" y="535" text-anchor="middle" font-family="Arial, sans-serif" font-size="30" font-weight="700" fill="${theme.glow}" letter-spacing="3">${instruction}</text>
   </svg>`;
-  return sharp(Buffer.from(svg)).png().toBuffer();
+
+  const base = sharp(Buffer.from(svg)).png();
+  if (type === 'word') return base.toBuffer();
+
+  if (type === 'flag') {
+    const flagImage = await getFlagImage(flagCode);
+    if (!flagImage) {
+      // Last-resort fallback if the image host is unavailable.
+      return sharp(Buffer.from(svg.replace(clueMarkup, `<text x="500" y="330" text-anchor="middle" dominant-baseline="middle" font-family="Arial, sans-serif" font-size="92" font-weight="900" fill="white">${safe}</text>`))).png().toBuffer();
+    }
+
+    const resizedFlag = await sharp(flagImage)
+      .resize({ width: 300, height: 210, fit: 'contain', withoutEnlargement: true })
+      .png()
+      .toBuffer();
+
+    return base.composite([{ input: resizedFlag, left: 350, top: 220 }]).png().toBuffer();
+  }
+
+  const emojiParts = splitEmojiGraphemes(clue);
+  const emojiImages = await Promise.all(emojiParts.map((emoji) => getEmojiImage(emoji)));
+  const validImages = emojiImages.filter(Boolean);
+
+  if (!validImages.length) {
+    return sharp(Buffer.from(svg.replace(clueMarkup, `<text x="500" y="330" text-anchor="middle" dominant-baseline="middle" font-family="Arial, sans-serif" font-size="92" font-weight="900" fill="white">${safe}</text>`))).png().toBuffer();
+  }
+
+  const size = Math.min(150, Math.max(90, Math.floor(520 / validImages.length)));
+  const gap = 28;
+  const totalWidth = validImages.length * size + (validImages.length - 1) * gap;
+  let left = Math.round((1000 - totalWidth) / 2);
+  const composites = [];
+
+  for (const image of validImages) {
+    const resized = await sharp(image).resize({ width: size, height: size, fit: 'contain' }).png().toBuffer();
+    composites.push({ input: resized, left, top: Math.round(330 - size / 2) });
+    left += size + gap;
+  }
+
+  return base.composite(composites).png().toBuffer();
 }
 
 function nextExactHour(now = new Date()) {
@@ -180,6 +276,7 @@ function chooseRound(previousRound = null) {
       type,
       clue: country.flag,
       answer: country.name,
+      flagCode: country.code,
       options: buildOptions(country.name, COUNTRIES.map((item) => item.name), 4),
     };
   }
@@ -266,7 +363,11 @@ export async function startDueMiniGames({ db, telegram, logger = console }) {
     const activeRound = claimed.activeRound;
     const caption = roundCaption(activeRound);
     try {
-      const image = await renderGameImage(activeRound.clue || activeRound.answer, activeRound.type || 'word');
+      const image = await renderGameImage(
+        activeRound.clue || activeRound.answer,
+        activeRound.type || 'word',
+        activeRound.flagCode || '',
+      );
       await telegram.sendPhoto(claimed.groupId, Input.fromBuffer(image, 'chatfight-game.png'), {
         caption,
         parse_mode: 'HTML',
