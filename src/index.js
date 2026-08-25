@@ -68,6 +68,108 @@ const loggerChatId = getLoggerChatId(process.env);
 const publicGroupLink = process.env.PUBLIC_GROUP_LINK || '';
 const supportChatLink = process.env.SUPPORT_CHAT_LINK || process.env.PUBLIC_GROUP_LINK || '';
 
+
+// ===== Daily funny group summary (free) =====
+// Uses Gemini when GEMINI_API_KEY is configured (free tier can be used),
+// otherwise falls back to a completely local funny summary with no API cost.
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+
+function getISTDateKey(date = new Date()) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).format(date);
+}
+
+function getISTTimeParts(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+  }).formatToParts(date);
+  const map = Object.fromEntries(parts.filter(p => p.type !== 'literal').map(p => [p.type, p.value]));
+  return { hour: Number(map.hour), minute: Number(map.minute) };
+}
+
+function localFunnySummary(messages) {
+  const counts = new Map();
+  for (const m of messages) counts.set(m.name, (counts.get(m.name) || 0) + 1);
+  const active = [...counts.entries()].sort((a,b) => b[1]-a[1]).slice(0,3).map(([name,count]) => `${name} (${count} msgs)`);
+  const interesting = messages
+    .filter(m => m.text && m.text.length > 8)
+    .sort((a,b) => b.text.length - a.text.length)
+    .slice(0,3)
+    .map(m => `${m.name} ki baat: “${m.text.replace(/\s+/g,' ').slice(0,120)}${m.text.length>120?'…':''}”`);
+  const total = messages.length;
+  return `🌙😂 Aaj ka group officially full entertainment mode mein raha! Total ${total} messages ne group ko busy rakha, aur ${active.length ? active.join(', ') : 'sabhi members'} ne apni presence achhe se feel karayi 😭😂. ${interesting.length ? 'Aaj ke kuch interesting moments mein ' + interesting.join(', aur ') + ' shamil rahe.' : 'Aaj ki conversations kaafi mysterious rahi aur sab log apne-apne secret missions par the 🤣.'} Overall conclusion ye hai ki productivity ka pata nahi, lekin entertainment aur chaos dono full power par the 🔥😂. Good night chaos creators, kal phir naye memes, naye topics aur bilkul unexpected discussions ke saath milte hain! 🌙💀`;
+}
+
+async function generateFunnySummary(messages) {
+  if (!GEMINI_API_KEY) return localFunnySummary(messages);
+  const chat = messages.map(m => `[${m.name}]: ${m.text}`).join('\n').slice(0, 30000);
+  const prompt = `You are summarizing a Telegram group chat. Write ONE funny, warm Hinglish paragraph (not bullet points), 120-220 words. Mention interesting moments and users naturally, lightly roast harmlessly, do not invent facts, do not reveal sensitive/private information, avoid offensive content. Start with 🌙😂 Aaj ka Group Summary: and end with a funny good-night line. Chat:\n${chat}`;
+  try {
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.9, maxOutputTokens: 450 } })
+    });
+    if (!r.ok) throw new Error(`Gemini HTTP ${r.status}`);
+    const data = await r.json();
+    const text = data?.candidates?.[0]?.content?.parts?.map(p=>p.text).join('').trim();
+    if (text) return text;
+    throw new Error('Empty Gemini response');
+  } catch (error) {
+    console.warn('[Summary] AI failed, using free local summary:', error.message || error);
+    return localFunnySummary(messages);
+  }
+}
+
+async function saveSummaryMessage(groupId, message) {
+  const database = await connectDb();
+  const dayKey = getISTDateKey();
+  const text = cleanUnicode(String(message.text || message.caption || '')).trim();
+  if (!text || text.startsWith('/')) return;
+  const col = database.collection('daily_chat_messages');
+  await col.updateOne(
+    { groupId, dayKey, messageId: message.message_id },
+    { $setOnInsert: { groupId, dayKey, messageId: message.message_id, userId: String(message.from?.id || ''), name: normalizeDisplayName([message.from?.first_name, message.from?.last_name].filter(Boolean).join(' ') || message.from?.username || 'Unknown'), text: text.slice(0, 700), createdAt: new Date() } },
+    { upsert: true }
+  );
+  // Keep storage bounded: only the latest 500 messages per group/day are used.
+  const count = await col.countDocuments({ groupId, dayKey });
+  if (count > 500) {
+    const old = await col.find({ groupId, dayKey }).sort({ createdAt: 1 }).limit(count - 500).project({_id:1}).toArray();
+    if (old.length) await col.deleteMany({ _id: { $in: old.map(x=>x._id) } });
+  }
+}
+
+async function runDailySummaries() {
+  const database = await connectDb();
+  const now = new Date();
+  const { hour, minute } = getISTTimeParts(now);
+  // Run once shortly after midnight IST. A lock prevents duplicate summaries on restarts.
+  if (!(hour === 0 && minute < 5)) return;
+  const prev = new Date(now.valueOf() - 24*60*60*1000);
+  const previousDay = getISTDateKey(prev);
+  const groups = await database.collection('daily_chat_messages').distinct('groupId', { dayKey: previousDay });
+  for (const groupId of groups) {
+    const lock = await database.collection('daily_summary_runs').findOneAndUpdate(
+      { groupId, dayKey: previousDay, sent: { $ne: true } },
+      { $setOnInsert: { groupId, dayKey: previousDay, createdAt: now }, $set: { updatedAt: now } },
+      { upsert: true, returnDocument: 'after' }
+    );
+    const already = lock?.sent === true;
+    if (already) continue;
+    const messages = await database.collection('daily_chat_messages').find({ groupId, dayKey: previousDay }).sort({ createdAt: 1 }).limit(500).toArray();
+    if (messages.length < 5) continue;
+    try {
+      const summary = await generateFunnySummary(messages);
+      await bot.telegram.sendMessage(groupId, summary, { disable_web_page_preview: true });
+      await database.collection('daily_summary_runs').updateOne({ groupId, dayKey: previousDay }, { $set: { sent: true, sentAt: new Date() } });
+      console.log(`[Summary] Sent daily summary to ${groupId}`);
+    } catch (error) {
+      console.error(`[Summary] Failed for ${groupId}:`, error.message || error);
+    }
+  }
+}
+
 function addTickToKeyboard(keyboard, activeCallback) {
   if (!keyboard?.inline_keyboard || !activeCallback) return keyboard;
   return {
@@ -402,6 +504,9 @@ async function checkSpamAndCount(ctx) {
   const groupName = ctx.chat?.title || ctx.chat?.username || `Group ${groupId}`;
   const groupLink = ctx.chat?.username ? `https://t.me/${ctx.chat.username}` : null;
 
+  // Save the day's human chat messages for the automatic midnight IST summary.
+  await saveSummaryMessage(groupId, message).catch(error => console.warn('[Summary] Could not save message:', error.message || error));
+
   const { groupStatus } = await getUserStatus(userId, groupId);
   if (isActiveDate(groupStatus?.blockedUntil)) return;
 
@@ -643,80 +748,82 @@ async function getUserProfile(groupId, userId) {
   };
 }
 
+const globalRankingCache = new Map();
+const GLOBAL_RANKING_CACHE_MS = 15000;
+
+function getCachedGlobalRanking(key) {
+  const cached = globalRankingCache.get(key);
+  if (cached && Date.now() - cached.createdAt < GLOBAL_RANKING_CACHE_MS) return cached.value;
+  return null;
+}
+
+function setCachedGlobalRanking(key, value) {
+  globalRankingCache.set(key, { createdAt: Date.now(), value });
+  return value;
+}
+
 async function getGlobalUsers(mode = 'today') {
+  const cacheKey = `users:${mode}`;
+  const cached = getCachedGlobalRanking(cacheKey);
+  if (cached) return cached;
+
   const database = await connectDb();
   const users = database.collection('group_users');
-  const now = new Date();
-  const dayKey = getISTDayKey(now);
-  const weekKey = getWeekKey(now);
-
+  const dayKey = getISTDayKey(new Date());
+  const weekKey = getWeekKey(new Date());
   let match = {};
-  let sortField = 'dailyMessageCount';
   let valueField = '$dailyMessageCount';
+  if (mode === 'weekly') { match = { weekKey }; valueField = '$weeklyMessageCount'; }
+  else if (mode === 'total') { valueField = '$messageCount'; }
+  else { match = { dayKey }; }
 
-  if (mode === 'weekly') {
-    match = { weekKey };
-    sortField = 'weeklyMessageCount';
-    valueField = '$weeklyMessageCount';
-  } else if (mode === 'total') {
-    sortField = 'messageCount';
-    valueField = '$messageCount';
-  } else {
-    match = { dayKey };
-  }
-
-  const entries = await users.aggregate([
+  const [result] = await users.aggregate([
     { $match: match },
-    { $group: { _id: '$userId', userName: { $first: '$userName' }, displayName: { $first: '$displayName' }, value: { $sum: valueField } } },
-    { $sort: { value: -1, displayName: 1, userName: 1 } },
-    { $limit: 10 },
+    { $facet: {
+      top: [
+        { $group: { _id: '$userId', userName: { $first: '$userName' }, displayName: { $first: '$displayName' }, value: { $sum: valueField } } },
+        { $sort: { value: -1, displayName: 1, userName: 1 } },
+        { $limit: 10 },
+      ],
+      totals: [ { $group: { _id: null, total: { $sum: valueField } } } ],
+    } },
   ]).toArray();
 
-  const totalResult = await users.aggregate([
-    { $match: match },
-    { $group: { _id: null, total: { $sum: valueField } } },
-  ]).toArray();
-
-  return entries.map((entry) => ({ ...entry, value: entry.value || 0, totalValue: totalResult[0]?.total || 0 }));
+  const totalValue = result?.totals?.[0]?.total || 0;
+  const entries = (result?.top || []).map((entry) => ({ ...entry, value: entry.value || 0, totalValue }));
+  return setCachedGlobalRanking(cacheKey, entries);
 }
 
 async function getGlobalGroups(mode = 'today') {
+  const cacheKey = `groups:${mode}`;
+  const cached = getCachedGlobalRanking(cacheKey);
+  if (cached) return cached;
+
   const database = await connectDb();
   const users = database.collection('group_users');
-  const now = new Date();
-  const dayKey = getISTDayKey(now);
-  const weekKey = getWeekKey(now);
-
+  const dayKey = getISTDayKey(new Date());
+  const weekKey = getWeekKey(new Date());
   let match = {};
   let valueField = '$dailyMessageCount';
+  if (mode === 'weekly') { match = { weekKey }; valueField = '$weeklyMessageCount'; }
+  else if (mode === 'total') { valueField = '$messageCount'; }
+  else { match = { dayKey }; }
 
-  if (mode === 'weekly') {
-    match = { weekKey };
-    valueField = '$weeklyMessageCount';
-  } else if (mode === 'total') {
-    valueField = '$messageCount';
-  } else {
-    match = { dayKey };
-  }
-
-  const entries = await users.aggregate([
+  const [result] = await users.aggregate([
     { $match: match },
-    { $group: {
-      _id: '$groupId',
-      groupName: { $first: '$groupName' },
-      groupLink: { $first: '$groupLink' },
-      value: { $sum: valueField },
+    { $facet: {
+      top: [
+        { $group: { _id: '$groupId', groupName: { $first: '$groupName' }, groupLink: { $first: '$groupLink' }, value: { $sum: valueField } } },
+        { $sort: { value: -1, _id: 1 } },
+        { $limit: 10 },
+      ],
+      totals: [ { $group: { _id: null, total: { $sum: valueField } } } ],
     } },
-    { $sort: { value: -1, _id: 1 } },
-    { $limit: 10 },
   ]).toArray();
 
-  const totalResult = await users.aggregate([
-    { $match: match },
-    { $group: { _id: null, total: { $sum: valueField } } },
-  ]).toArray();
-
-  return entries.map((entry) => ({ ...entry, value: entry.value || 0, totalValue: totalResult[0]?.total || 0 }));
+  const totalValue = result?.totals?.[0]?.total || 0;
+  const entries = (result?.top || []).map((entry) => ({ ...entry, value: entry.value || 0, totalValue }));
+  return setCachedGlobalRanking(cacheKey, entries);
 }
 
 async function getUserTopGroups(userId) {
@@ -1505,6 +1612,11 @@ async function start() {
   setInterval(runMiniGames, 15000);
 
   console.log('[MiniGame] Scheduler started');
+
+  // Check every minute for the automatic 12:00 AM IST group summaries.
+  setInterval(() => runDailySummaries().catch(error => console.error('[Summary] Scheduler error:', error)), 60_000);
+  await runDailySummaries();
+  console.log('[Summary] Midnight IST scheduler started');
 
   await bot.launch();
 
