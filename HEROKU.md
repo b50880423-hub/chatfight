@@ -4,15 +4,17 @@ Buildpack:
 - heroku/nodejs
 
 Procfile:
-- worker: npm start
+- web: npm run web
+- worker: npm run worker
 
 Dynos:
-- Web: 0
+- Web: 1
 - Worker: 1
 
 Required Config Vars:
 - TELEGRAM_BOT_TOKEN
 - MONGODB_URI
+- WEBSITE_URL (the public URL of this Heroku app)
 
 Optional Config Vars:
 - MONGODB_DB_NAME (defaults to chatfight)
@@ -20,5 +22,3 @@ Optional Config Vars:
 - PUBLIC_GROUP_LINK
 - SUPPORT_CHAT_LINK
 - OWNER_IDS
-
-This deployment uses Telegram long polling and does not require a Heroku web dyno or PORT/HEALTH_PORT.
