@@ -1211,6 +1211,66 @@ bot.command('mytop', async (ctx) => {
   await sendOrEditMessage(ctx, message);
 });
 
+bot.command('setmessages', async (ctx) => {
+  if (!isOwner(ctx.from?.id)) {
+    await ctx.reply('Only the owner can use this command.');
+    return;
+  }
+
+  const groupId = ctx.chat?.type === 'private' ? null : ctx.chat?.id?.toString();
+  if (!groupId) {
+    await ctx.reply('Use this command inside the group where the messages were deleted.');
+    return;
+  }
+
+  const args = ctx.message.text.split(/\s+/).slice(1).filter(Boolean);
+  if (args.length < 2) {
+    await ctx.reply('Usage: /setmessages <user_id|@username> <number_to_add>');
+    return;
+  }
+
+  let targetId = args[0].replace(/^@/, '');
+  const amount = Number(args[1]);
+  if (!Number.isSafeInteger(amount) || amount <= 0) {
+    await ctx.reply('The number to add must be a positive whole number.');
+    return;
+  }
+
+  const database = await connectDb();
+  const users = database.collection('group_users');
+
+  // A username is resolved inside the current group first so the correct
+  // user's ranking is updated when the same username appears in other data.
+  let target = null;
+  if (!/^\d+$/.test(targetId)) {
+    target = await users.findOne({ groupId, userName: targetId });
+    if (!target) {
+      await ctx.reply('User not found in this group. Use their numeric user ID or a known @username.');
+      return;
+    }
+    targetId = String(target.userId);
+  } else {
+    target = await users.findOne({ groupId, userId: String(targetId) });
+    if (!target) {
+      await ctx.reply('User has no tracked ranking data in this group yet.');
+      return;
+    }
+  }
+
+  // MongoDB stores this change permanently, so it survives bot restarts and
+  // redeploys as long as the same MONGODB_URI / database is used.
+  const result = await users.findOneAndUpdate(
+    { groupId, userId: String(targetId) },
+    { $inc: { messageCount: amount }, $set: { updatedAt: new Date() } },
+    { returnDocument: 'after' },
+  );
+
+  const updated = result?.value || result;
+  const newTotal = Number(updated?.messageCount || ((target?.messageCount || 0) + amount));
+  const name = updated?.userName || target?.userName || target?.displayName || `User ${targetId}`;
+  await ctx.reply(`✅ Added ${amount.toLocaleString()} messages to ${name}.\n\n💬 New total: ${newTotal.toLocaleString()}\n🔒 This is saved permanently in MongoDB and will not reset after redeploy.`);
+});
+
 bot.command('inspect', async (ctx) => {
   if (!isOwner(ctx.from?.id)) {
     await ctx.reply('Only the owner can use this command.');
