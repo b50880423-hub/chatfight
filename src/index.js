@@ -88,27 +88,52 @@ function getISTTimeParts(date = new Date()) {
   return { hour: Number(map.hour), minute: Number(map.minute) };
 }
 
+function summaryName(m) {
+  const raw = String(m.username || m.name || 'Unknown').trim();
+  if (!raw || raw === 'Unknown') return 'kisi mysterious member';
+  return raw.startsWith('@') ? raw : `@${raw.replace(/\s+/g, '_').replace(/^@+/, '')}`;
+}
+
 function localFunnySummary(messages) {
   const counts = new Map();
-  for (const m of messages) counts.set(m.name, (counts.get(m.name) || 0) + 1);
-  const active = [...counts.entries()].sort((a,b) => b[1]-a[1]).slice(0,3).map(([name,count]) => `${name} (${count} msgs)`);
-  const interesting = messages
-    .filter(m => m.text && m.text.length > 8)
-    .sort((a,b) => b.text.length - a.text.length)
-    .slice(0,3)
-    .map(m => `${m.name} ki baat: “${m.text.replace(/\s+/g,' ').slice(0,120)}${m.text.length>120?'…':''}”`);
+  for (const m of messages) {
+    const name = summaryName(m);
+    counts.set(name, (counts.get(name) || 0) + 1);
+  }
+  const active = [...counts.entries()].sort((a,b) => b[1]-a[1]);
+  const names = active.slice(0, 4).map(([name]) => name);
   const total = messages.length;
-  return `🌙😂 Aaj ka group officially full entertainment mode mein raha! Total ${total} messages ne group ko busy rakha, aur ${active.length ? active.join(', ') : 'sabhi members'} ne apni presence achhe se feel karayi 😭😂. ${interesting.length ? 'Aaj ke kuch interesting moments mein ' + interesting.join(', aur ') + ' shamil rahe.' : 'Aaj ki conversations kaafi mysterious rahi aur sab log apne-apne secret missions par the 🤣.'} Overall conclusion ye hai ki productivity ka pata nahi, lekin entertainment aur chaos dono full power par the 🔥😂. Good night chaos creators, kal phir naye memes, naye topics aur bilkul unexpected discussions ke saath milte hain! 🌙💀`;
+  const opener = [
+    '🌙😂 Aaj raat ka group report sun lo—shanti ne aaj bhi attendance nahi lagayi 😭.',
+    '🌙😂 Aaj ka group dekhkar lag raha hai Telegram ko overtime ka bill bhejna padega 💀.',
+    '🌙😂 Aaj yahan conversation kam aur full season ka entertainment package zyada chala 😭🍿.',
+    '🌙😂 Aaj ka scene itna active tha ki silent mode bhi shayad resign kar deta 😂.'
+  ];
+  const roast = active.length
+    ? `${active[0][0]} ne ${active[0][1]} messages ke saath keyboard ko clearly full-time job par laga diya ⌨️😭`
+    : 'sab log mysteriously active rahe aur phir evidence chhupa diya 👻';
+  const others = names.slice(1);
+  const randomLine = [
+    'Beech mein normal si baat ko bhi unnecessary PhD-level discussion banne ka mauka mil gaya 🤡.',
+    'Kuch log full energy mein aaye, scene interesting kiya aur phir cameo appearance dekar gayab ho gaye 💨😂.',
+    'Topic itni baar mudaa ki compass bhi confuse ho jata ki discussion actually jaa kahan rahi hai 🧭💀.',
+    'Notifications dekhne wale members ke liye aaj ka din emotional damage ka special episode raha hoga 📱😭.'
+  ];
+  const pick = arr => arr[Math.floor(Math.random() * arr.length)];
+  const people = others.length ? ` Aur ${others.join(', ')} bhi is legendary episode mein apni-apni presence dekar gaye 😂.` : '';
+  return `${pick(opener)} ${roast}.${people} ${pick(randomLine)} Total ${total} messages ke baad AI ka final verdict: productivity ka pata nahi, lekin group ne entertainment department ko bilkul disappoint nahi kiya 🔥😂. Kal phir naye topics, naye kand aur hopefully thodi shanti ke saath milenge... although is group ko dekhkar shanti ki expectations rakhna bhi thoda overconfidence hai 😭🌙.`;
 }
 
 async function generateFunnySummary(messages) {
   if (!GEMINI_API_KEY) return localFunnySummary(messages);
-  const chat = messages.map(m => `[${m.name}]: ${m.text}`).join('\n').slice(0, 30000);
-  const prompt = `You are summarizing a Telegram group chat. Write ONE funny, warm Hinglish paragraph (not bullet points), 120-220 words. Mention interesting moments and users naturally, lightly roast harmlessly, do not invent facts, do not reveal sensitive/private information, avoid offensive content. Start with 🌙😂 Aaj ka Group Summary: and end with a funny good-night line. Chat:\n${chat}`;
+  const participants = [...new Map(messages.map(m => [String(m.userId || m.username || m.name), summaryName(m)])).values()].filter(Boolean);
+  const chat = messages.map(m => `[${summaryName(m)}]: ${m.text}`).join('\n').slice(0, 30000);
+  const prompt = `You are a witty late-night comedy narrator summarizing ONE specific Telegram group. Write exactly ONE natural Hinglish paragraph, around 120-220 words, not bullet points and not a fixed template. Every day must feel noticeably different in wording, structure, jokes and opening. Use 2-5 REAL usernames from this group's provided chat only when they actually appear in the conversation. Mention them naturally and give playful, decent, harmless roasting based on their actual activity or messages. Never invent a username, person, event, quote or fact. Never mention anyone outside this group/day. Do not repeat generic labels such as “Ghost of the Day” or “Keyboard Warrior” every time. You may joke about being talkative, disappearing after a cameo, overthinking a topic, turning a small topic into a huge discussion, random entries, or notification overload—but vary the jokes creatively. Keep it warm, funny and non-offensive; do not target protected traits, appearance, sexuality, religion, disability, trauma or sensitive/private information. Do not expose personal data. Start naturally with a moon/funny emoji such as 🌙😂, but vary the exact opening. End with a short funny good-night line. This is the list of valid participant names/usernames you may mention: ${participants.slice(0,30).join(', ') || 'none'}. Chat:
+${chat}`;
   try {
     const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`, {
       method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.9, maxOutputTokens: 450 } })
+      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 1.05, topP: 0.95, maxOutputTokens: 500 } })
     });
     if (!r.ok) throw new Error(`Gemini HTTP ${r.status}`);
     const data = await r.json();
@@ -129,7 +154,7 @@ async function saveSummaryMessage(groupId, message) {
   const col = database.collection('daily_chat_messages');
   await col.updateOne(
     { groupId, dayKey, messageId: message.message_id },
-    { $setOnInsert: { groupId, dayKey, messageId: message.message_id, userId: String(message.from?.id || ''), name: normalizeDisplayName([message.from?.first_name, message.from?.last_name].filter(Boolean).join(' ') || message.from?.username || 'Unknown'), text: text.slice(0, 700), createdAt: new Date() } },
+    { $setOnInsert: { groupId, dayKey, messageId: message.message_id, userId: String(message.from?.id || ''), username: message.from?.username ? `@${message.from.username}` : '', name: normalizeDisplayName([message.from?.first_name, message.from?.last_name].filter(Boolean).join(' ') || message.from?.username || 'Unknown'), text: text.slice(0, 700), createdAt: new Date() } },
     { upsert: true }
   );
   // Keep storage bounded: only the latest 500 messages per group/day are used.
