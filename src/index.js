@@ -169,27 +169,75 @@ async function runDailySummaries() {
   const database = await connectDb();
   const now = new Date();
   const { hour, minute } = getISTTimeParts(now);
-  // Run once shortly after midnight IST. A lock prevents duplicate summaries on restarts.
+
+  // Only check during the first five minutes after midnight IST.
   if (!(hour === 0 && minute < 5)) return;
-  const prev = new Date(now.valueOf() - 24*60*60*1000);
+
+  const prev = new Date(now.valueOf() - 24 * 60 * 60 * 1000);
   const previousDay = getISTDateKey(prev);
+  const runs = database.collection('daily_summary_runs');
   const groups = await database.collection('daily_chat_messages').distinct('groupId', { dayKey: previousDay });
+
   for (const groupId of groups) {
-    const lock = await database.collection('daily_summary_runs').findOneAndUpdate(
-      { groupId, dayKey: previousDay, sent: { $ne: true } },
-      { $setOnInsert: { groupId, dayKey: previousDay, createdAt: now }, $set: { updatedAt: now } },
+    // IMPORTANT: atomically CLAIM this group/day before generating or sending.
+    // This prevents duplicate summaries when multiple schedulers/dynos run at once.
+    const claimId = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const staleBefore = new Date(Date.now() - 10 * 60 * 1000);
+    const claim = await runs.findOneAndUpdate(
+      {
+        groupId,
+        dayKey: previousDay,
+        sent: { $ne: true },
+        $or: [
+          { processing: { $ne: true } },
+          { processingAt: { $lt: staleBefore } }
+        ]
+      },
+      {
+        $setOnInsert: { groupId, dayKey: previousDay, createdAt: now },
+        $set: { processing: true, processingAt: now, claimId, updatedAt: now }
+      },
       { upsert: true, returnDocument: 'after' }
     );
-    const already = lock?.sent === true;
-    if (already) continue;
-    const messages = await database.collection('daily_chat_messages').find({ groupId, dayKey: previousDay }).sort({ createdAt: 1 }).limit(500).toArray();
-    if (messages.length < 5) continue;
+
+    // Another scheduler already owns this summary job.
+    if (!claim || claim.claimId !== claimId) continue;
+
+    const messages = await database.collection('daily_chat_messages')
+      .find({ groupId, dayKey: previousDay })
+      .sort({ createdAt: 1 })
+      .limit(500)
+      .toArray();
+
+    if (messages.length < 5) {
+      await runs.updateOne(
+        { groupId, dayKey: previousDay, claimId },
+        { $set: { processing: false, skipped: true, skippedAt: new Date() } }
+      );
+      continue;
+    }
+
     try {
       const summary = await generateFunnySummary(messages);
+
+      // Send only while we still own the claim.
+      const stillOwned = await runs.findOne({ groupId, dayKey: previousDay, claimId, sent: { $ne: true } });
+      if (!stillOwned) continue;
+
       await bot.telegram.sendMessage(groupId, summary, { disable_web_page_preview: true });
-      await database.collection('daily_summary_runs').updateOne({ groupId, dayKey: previousDay }, { $set: { sent: true, sentAt: new Date() } });
-      console.log(`[Summary] Sent daily summary to ${groupId}`);
+
+      // Mark permanently sent immediately after the single successful Telegram send.
+      await runs.updateOne(
+        { groupId, dayKey: previousDay, claimId },
+        { $set: { sent: true, sentAt: new Date(), processing: false }, $unset: { claimId: '', processingAt: '' } }
+      );
+      console.log(`[Summary] Sent ONE daily summary to ${groupId}`);
     } catch (error) {
+      // Release the claim so a later scheduler attempt can retry.
+      await runs.updateOne(
+        { groupId, dayKey: previousDay, claimId },
+        { $set: { processing: false, lastError: String(error.message || error), lastErrorAt: new Date() }, $unset: { claimId: '', processingAt: '' } }
+      ).catch(() => {});
       console.error(`[Summary] Failed for ${groupId}:`, error.message || error);
     }
   }
