@@ -170,8 +170,8 @@ async function runDailySummaries() {
   const now = new Date();
   const { hour, minute } = getISTTimeParts(now);
 
-  // Only check during the first five minutes after midnight IST.
-  if (!(hour === 0 && minute < 5)) return;
+  // Run strictly at 12:00 AM IST only. Never run at 12:01, 12:02, etc.
+  if (!(hour === 0 && minute === 0)) return;
 
   const prev = new Date(now.valueOf() - 24 * 60 * 60 * 1000);
   const previousDay = getISTDateKey(prev);
@@ -188,6 +188,7 @@ async function runDailySummaries() {
         groupId,
         dayKey: previousDay,
         sent: { $ne: true },
+        attempted: { $ne: true },
         $or: [
           { processing: { $ne: true } },
           { processingAt: { $lt: staleBefore } }
@@ -195,7 +196,10 @@ async function runDailySummaries() {
       },
       {
         $setOnInsert: { groupId, dayKey: previousDay, createdAt: now },
-        $set: { processing: true, processingAt: now, claimId, updatedAt: now }
+        // Mark the day's summary as attempted before sending. This gives us
+        // at-most-once delivery even if Telegram succeeds but the database
+        // update immediately afterwards fails.
+        $set: { attempted: true, attemptedAt: now, processing: true, processingAt: now, claimId, updatedAt: now }
       },
       { upsert: true, returnDocument: 'after' }
     );
@@ -233,10 +237,11 @@ async function runDailySummaries() {
       );
       console.log(`[Summary] Sent ONE daily summary to ${groupId}`);
     } catch (error) {
-      // Release the claim so a later scheduler attempt can retry.
+      // Do NOT release this day's attempt for retry. The requirement is exactly
+      // one send attempt at 12:00 AM IST and no duplicate summaries.
       await runs.updateOne(
         { groupId, dayKey: previousDay, claimId },
-        { $set: { processing: false, lastError: String(error.message || error), lastErrorAt: new Date() }, $unset: { claimId: '', processingAt: '' } }
+        { $set: { processing: false, failed: true, lastError: String(error.message || error), lastErrorAt: new Date() }, $unset: { claimId: '', processingAt: '' } }
       ).catch(() => {});
       console.error(`[Summary] Failed for ${groupId}:`, error.message || error);
     }
