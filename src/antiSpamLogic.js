@@ -1,4 +1,4 @@
-export const RULE_5_MESSAGE_GAP_MS = 2 * 1000;
+export const RULE_5_MESSAGE_GAP_MS = 3 * 1000;
 export const RULE_5_MESSAGE_LIMIT = 10;
 export const RULE_5_BLOCK_MS = 20 * 60 * 1000;
 
