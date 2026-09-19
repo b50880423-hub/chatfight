@@ -35,15 +35,13 @@ const COUNTRIES = [
 ];
 
 const EMOJI_GUESSES = [
-  { clue: '🍎📱', answer: 'Apple' }, { clue: '🦁👑', answer: 'Lion King' },
-  { clue: '🌍🌙', answer: 'Earth Moon' }, { clue: '🚗💨', answer: 'Racing' },
-  { clue: '🔥🧊', answer: 'Fire and Ice' }, { clue: '🌧️☀️', answer: 'Rainbow' },
-  { clue: '🐼🎋', answer: 'Panda' }, { clue: '🚀🌌', answer: 'Space' },
-  { clue: '⚽🏆', answer: 'Football' }, { clue: '🎸🎵', answer: 'Music' },
-  { clue: '👑💎', answer: 'Royalty' }, { clue: '🍕🇮🇹', answer: 'Italy' },
+  '🍎', '🍕', '🚀', '🌈', '🐼', '🦁', '🐸', '🦄', '🎸', '⚽', '🏆', '💎',
+  '🔥', '❄️', '🌙', '⭐', '🌻', '🍔', '🍩', '🎁', '🚗', '✈️', '🏝️', '🎯',
+  '🧸', '🍉', '🥳', '😎', '🤖', '👑', '🦋', '🐧', '🐨', '🦊', '🐯', '🐵',
+  '🍀', '☀️', '🌊', '⚡', '❤️', '💜', '💙', '💚', '🧡', '🤍', '🖤', '💛',
 ];
 
-const EMOJI_OPTION_POOL = [...new Set(EMOJI_GUESSES.map((game) => game.answer))];
+const EMOJI_OPTION_POOL = [...new Set(EMOJI_GUESSES)];
 
 function shuffle(items) {
   const copy = [...items];
@@ -149,7 +147,7 @@ async function getEmojiImage(emoji) {
 
 async function renderGameImage(clue, type = 'word', flagCode = '') {
   const safe = escapeHtml(clue);
-  const instruction = type === 'flag' ? 'GUESS THE COUNTRY' : type === 'emoji' ? 'GUESS THE EMOJIS' : 'TYPE THE WORD';
+  const instruction = type === 'flag' ? 'GUESS THE COUNTRY' : type === 'emoji' ? 'PICK THE MATCHING EMOJI' : 'TYPE THE WORD';
   const theme = GAME_THEMES[Math.floor(Math.random() * GAME_THEMES.length)];
   const clueMarkup = (type === 'flag' || type === 'emoji')
     ? ''
@@ -282,12 +280,12 @@ function chooseRound(previousRound = null) {
   }
 
   if (type === 'emoji') {
-    const game = EMOJI_GUESSES[Math.floor(Math.random() * EMOJI_GUESSES.length)];
+    const emoji = EMOJI_GUESSES[Math.floor(Math.random() * EMOJI_GUESSES.length)];
     return {
       type,
-      clue: game.clue,
-      answer: game.answer,
-      options: buildOptions(game.answer, EMOJI_OPTION_POOL, 9),
+      clue: emoji,
+      answer: emoji,
+      options: buildOptions(emoji, EMOJI_OPTION_POOL, 9),
     };
   }
 
@@ -333,6 +331,26 @@ function roundCaption(round) {
 ⏱️ <b>Time remaining: 10 minutes</b>`;
 }
 
+
+export async function acquireMiniGameSchedulerLock(db, owner = `${process.pid}-${Math.random().toString(36).slice(2)}`, leaseMs = 45000) {
+  const locks = db.collection('mini_game_locks');
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + leaseMs);
+  try {
+    const result = await locks.findOneAndUpdate(
+      { _id: 'scheduler', $or: [{ expiresAt: { $lte: now } }, { expiresAt: { $exists: false } }, { owner }] },
+      { $set: { owner, expiresAt, updatedAt: now } },
+      { upsert: true, returnDocument: 'after' },
+    );
+    return result?.owner === owner;
+  } catch (error) {
+    // Two instances can race on first creation; the unique _id means only
+    // one wins. The other simply skips this scheduler tick.
+    if (error?.code === 11000) return false;
+    throw error;
+  }
+}
+
 export async function startDueMiniGames({ db, telegram, logger = console }) {
   console.log("[MiniGame] startDueMiniGames() CALLED");
   
@@ -368,12 +386,16 @@ export async function startDueMiniGames({ db, telegram, logger = console }) {
         activeRound.type || 'word',
         activeRound.flagCode || '',
       );
-      await telegram.sendPhoto(claimed.groupId, Input.fromBuffer(image, 'chatfight-game.png'), {
+      const sent = await telegram.sendPhoto(claimed.groupId, Input.fromBuffer(image, 'chatfight-game.png'), {
         caption,
         parse_mode: 'HTML',
         reply_markup: miniGameKeyboard(activeRound),
         has_spoiler: true,
       });
+      await games.updateOne(
+        { _id: claimed._id, 'activeRound.startedAt': activeRound.startedAt },
+        { $set: { 'activeRound.messageId': sent?.message_id || null, lastSendError: null, updatedAt: new Date() } },
+      );
     } catch (error) {
       const description = error?.response?.description || error?.message || error;
       const descriptionText = String(description);
@@ -382,7 +404,11 @@ export async function startDueMiniGames({ db, telegram, logger = console }) {
       // by sending the same round as text instead of retrying forever.
       if (descriptionText.toLowerCase().includes('not enough rights to send photos')) {
         try {
-          await telegram.sendMessage(claimed.groupId, `${caption}\n\n<b>${escapeHtml(activeRound.clue || activeRound.answer)}</b>`, { parse_mode: 'HTML', reply_markup: miniGameKeyboard(activeRound) });
+          const sent = await telegram.sendMessage(claimed.groupId, `${caption}\n\n<b>${escapeHtml(activeRound.clue || activeRound.answer)}</b>`, { parse_mode: 'HTML', reply_markup: miniGameKeyboard(activeRound) });
+          await games.updateOne(
+            { _id: claimed._id, 'activeRound.startedAt': activeRound.startedAt },
+            { $set: { 'activeRound.messageId': sent?.message_id || null, lastSendError: null, updatedAt: new Date() } },
+          );
           await games.updateOne(
             { _id: claimed._id },
             { $set: { lastSendError: null } },
@@ -431,6 +457,19 @@ export async function expireMiniGames(db) {
   }
 }
 
+async function deleteMiniGameMessage(telegram, chatId, messageId) {
+  if (!chatId || !messageId) return;
+  try {
+    await telegram.deleteMessage(chatId, messageId);
+  } catch (error) {
+    const description = error?.response?.description || error?.message || '';
+    // Already deleted / inaccessible messages are harmless.
+    if (!/message to delete not found|message can't be deleted|message is not found/i.test(String(description))) {
+      console.warn('[MiniGame] Could not delete solved game message:', description);
+    }
+  }
+}
+
 export async function handleMiniGameAnswer({ db, ctx }) {
   const chat = ctx.chat;
   const message = ctx.message;
@@ -461,6 +500,8 @@ export async function handleMiniGameAnswer({ db, ctx }) {
     { returnDocument: 'before' },
   );
   if (!claimed?.activeRound) return true;
+
+  await deleteMiniGameMessage(ctx.telegram, chat.id, claimed.activeRound.messageId);
 
   const elapsedMs = Math.max(0, now.getTime() - startedAt.getTime());
   const points = pointsForElapsedMs(elapsedMs);
@@ -545,6 +586,8 @@ export async function handleMiniGameButtonAnswer({ db, ctx }) {
     { returnDocument: 'before' },
   );
   if (!claimed?.activeRound) return true;
+
+  await deleteMiniGameMessage(ctx.telegram, chat.id, claimed.activeRound.messageId || callback.message?.message_id);
 
   const elapsedMs = Math.max(0, now.getTime() - new Date(round.startedAt).getTime());
   const points = pointsForElapsedMs(elapsedMs);

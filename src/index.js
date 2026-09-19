@@ -53,6 +53,7 @@ import {
   ensureMiniGameIndexes,
   registerMiniGameGroup,
   startDueMiniGames,
+  acquireMiniGameSchedulerLock,
   expireMiniGames,
   handleMiniGameAnswer,
   handleMiniGameButtonAnswer,
@@ -67,6 +68,7 @@ const dbName = process.env.MONGODB_DB_NAME || 'chatfight';
 const loggerChatId = getLoggerChatId(process.env);
 const publicGroupLink = process.env.PUBLIC_GROUP_LINK || '';
 const supportChatLink = process.env.SUPPORT_CHAT_LINK || process.env.PUBLIC_GROUP_LINK || '';
+const miniGameSchedulerOwner = `${process.pid}-${Math.random().toString(36).slice(2)}`;
 
 
 // ===== Daily funny group summary (free) =====
@@ -317,6 +319,15 @@ async function ensureIndexes() {
 
   const groupStats = database.collection('group_stats');
   await groupStats.createIndex({ groupId: 1 }, { unique: true });
+
+  // A unique claim record makes milestone announcements idempotent across
+  // duplicate Telegram updates, concurrent handlers, and multiple bot dynos.
+  const milestoneClaims = database.collection('milestone_claims');
+  await milestoneClaims.createIndex(
+    { groupId: 1, dayKey: 1, milestone: 1 },
+    { unique: true },
+  );
+
   await ensureMiniGameIndexes(database);
 }
 
@@ -554,18 +565,48 @@ async function recordGroupMilestone(groupId, ctx) {
   const todayTotal = result[0]?.todayTotal || 0;
 
   // Daily milestones: 500, 1000, 1500, 2000, 2500...
+  // Claim the milestone atomically BEFORE sending anything. This is the
+  // important part: if two updates/processes see the same 500/1000 count,
+  // only one of them can create the unique claim and therefore only one
+  // announcement is sent.
   if (todayTotal > 0 && todayTotal % 500 === 0) {
+    const milestoneClaims = database.collection('milestone_claims');
+    const milestone = todayTotal;
+    const claimKey = `${groupId}:${dayKey}:${milestone}`;
+
+    try {
+      await milestoneClaims.insertOne({
+        groupId,
+        dayKey,
+        milestone,
+        claimKey,
+        createdAt: new Date(),
+      });
+    } catch (error) {
+      if (error?.code === 11000) {
+        console.log(`[Milestone] Duplicate prevented: ${groupId} ${dayKey} ${milestone}`);
+        return;
+      }
+      throw error;
+    }
+
     const groupName =
       ctx.chat?.title ||
       ctx.chat?.username ||
       'this group';
 
-    await ctx.reply(
-      `🎉 <b>${groupName}</b>\n\n` +
-      `🔥 <b>${todayTotal.toLocaleString()}</b> messages reached today!\n` +
-      `📊 Keep the chat going!`,
-      { parse_mode: 'HTML' }
-    );
+    try {
+      await ctx.reply(
+        `🎉 <b>${groupName}</b>\n\n` +
+        `🔥 <b>${milestone.toLocaleString()}</b> messages reached today!\n` +
+        `📊 Keep the chat going!`,
+        { parse_mode: 'HTML' }
+      );
+    } catch (error) {
+      // Keep the claim: retrying automatically could create a duplicate.
+      // Telegram failures are logged for diagnosis instead.
+      console.warn(`[Milestone] Announcement failed for ${claimKey}:`, error?.message || error);
+    }
   }
 }
 
@@ -1733,6 +1774,10 @@ async function start() {
 
   const runMiniGames = async () => {
     try {
+      // Mongo-backed lease prevents duplicate mini-game sends when more than
+      // one Heroku/Render process accidentally runs the scheduler.
+      if (!await acquireMiniGameSchedulerLock(database, miniGameSchedulerOwner)) return;
+
       await expireMiniGames(database);
 
       await startDueMiniGames({
