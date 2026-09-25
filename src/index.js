@@ -817,34 +817,35 @@ async function announceTierAchievement(ctx, previousMessageCount, newMessageCoun
   const previousTier = getTier(previousMessageCount);
   const newTier = getTier(newMessageCount);
 
-  if (newTier.level <= previousTier.level) return;
-  if (ctx.chat?.type === 'private') return;
+  // No new tier was reached, or this is a DM.
+  if (newTier.level <= previousTier.level || ctx.chat?.type === 'private') return;
 
-  // Claim this exact user/tier transition in MongoDB before sending the
-  // message. This prevents duplicate congratulations when Telegram retries an
-  // update or two bot workers process the same crossing at the same time.
   const database = await connectDb();
-  const users = database.collection('group_users');
-  const groupId = ctx.chat.id.toString();
-  const tierField = 'lastAnnouncedTierLevel';
-  const claim = await users.findOneAndUpdate(
-    {
-      groupId,
-      userId: String(userId),
-      $or: [
-        { [tierField]: { $exists: false } },
-        { [tierField]: { $lte: previousTier.level } },
-      ],
-    },
-    { $set: { [tierField]: newTier.level, updatedAt: new Date() } },
-    { returnDocument: 'after' },
-  );
+  const achievements = database.collection('tier_achievements');
+  const groupId = String(ctx.chat.id);
+  const uid = String(userId);
+  const claimKey = `${groupId}:${uid}:${newTier.level}`;
 
-  // A different worker already claimed this transition.
-  if (!claim) return;
+  // One unique MongoDB document per user/group/tier prevents duplicate
+  // announcements even when two bot workers receive the same update.
+  try {
+    await achievements.insertOne({
+      claimKey,
+      groupId,
+      userId: uid,
+      tierLevel: newTier.level,
+      title: newTier.title,
+      messageCount: Number(newMessageCount),
+      createdAt: new Date(),
+    });
+  } catch (error) {
+    if (error?.code === 11000) return;
+    console.warn('[Tier] Could not claim title achievement:', error?.message || error);
+    return;
+  }
 
   const safeName = escapeHtml(cleanUnicode(displayName || `User ${userId}`));
-  const mention = userId ? `<a href="tg://user?id=${escapeHtml(userId)}">${safeName}</a>` : safeName;
+  const mention = `<a href="tg://user?id=${escapeHtml(uid)}">${safeName}</a>`;
   const message = [
     '🏆 <b>NEW TITLE ACHIEVED!</b>',
     '',
@@ -858,7 +859,8 @@ async function announceTierAchievement(ctx, previousMessageCount, newMessageCoun
   try {
     await ctx.reply(message, { parse_mode: 'HTML' });
   } catch (error) {
-    console.warn('[Tier] Could not announce title achievement:', error.message || error);
+    // Keep the claim so duplicate announcements cannot be created.
+    console.warn('[Tier] Could not announce title achievement:', error?.message || error);
   }
 }
 
@@ -1494,7 +1496,8 @@ bot.command('profile', async (ctx) => {
   const contextName = ctx.chat?.title || ctx.chat?.username || 'this chat';
   const message = formatProfileText(profileData.profile, profileData.rank, profileData.totalUsers, contextName);
   const profilePhoto = await getTelegramProfilePhoto(userId);
-  const imageBuffer = profilePhoto || await generateProfileImage(profileData.profile, profileData.rank, profileData.totalUsers, contextName);
+  const profileWithTier = { ...profileData.profile, tierTitle: getTier(profileData.profile.messageCount || 0).title, tierLevel: getTier(profileData.profile.messageCount || 0).level };
+  const imageBuffer = profilePhoto || await generateProfileImage(profileWithTier, profileData.rank, profileData.totalUsers, contextName);
   await sendPhotoThenText(ctx, imageBuffer, message);
 });
 
@@ -1607,7 +1610,8 @@ bot.action('welcome:profile', async (ctx) => {
   const contextName = ctx.chat?.title || ctx.chat?.username || 'this chat';
   const message = formatProfileText(profileData.profile, profileData.rank, profileData.totalUsers, contextName);
   const profilePhoto = await getTelegramProfilePhoto(userId);
-  const imageBuffer = profilePhoto || await generateProfileImage(profileData.profile, profileData.rank, profileData.totalUsers, contextName);
+  const profileWithTier = { ...profileData.profile, tierTitle: getTier(profileData.profile.messageCount || 0).title, tierLevel: getTier(profileData.profile.messageCount || 0).level };
+  const imageBuffer = profilePhoto || await generateProfileImage(profileWithTier, profileData.rank, profileData.totalUsers, contextName);
   await sendPhotoThenText(ctx, imageBuffer, message);
 });
 
@@ -1746,6 +1750,12 @@ async function start() {
   await ensureIndexes();
 
   const database = await connectDb();
+
+  try {
+    await database.collection('tier_achievements').createIndex({ claimKey: 1 }, { unique: true });
+  } catch (error) {
+    console.warn('[Tier] Could not create achievement index:', error?.message || error);
+  }
 
   // Recover persisted hourly mini-games after restarts. Include groups that
   // were registered before any ranking row was written, otherwise a newly

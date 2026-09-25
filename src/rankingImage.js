@@ -148,6 +148,8 @@ export async function generateProfileImage(user, rank, totalUsers, contextName =
   const total = formatNumber(user?.messageCount);
   const today = formatNumber(user?.dailyMessageCount);
   const weekly = formatNumber(user?.weeklyMessageCount);
+  const tierTitle = String(user?.tierTitle || '');
+  const tierLevel = Number(user?.tierLevel || 1);
 
   const svg = `
   <svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">
@@ -183,9 +185,12 @@ export async function generateProfileImage(user, rank, totalUsers, contextName =
     <text x="824" y="245" class="label">THIS WEEK</text>
     <text x="824" y="310" class="value">${xml(weekly)}</text>
 
-    <text x="72" y="435" class="label">OVERALL RANK</text>
-    <text x="72" y="490" class="value">#${xml(rank)} / ${xml(totalUsers)}</text>
-    <text x="1128" y="490" text-anchor="end" class="label">CHATFIGHT</text>
+    <text x="72" y="405" class="label">TITLE</text>
+    <text x="72" y="445" class="value" style="font-size:26px">${xml(tierTitle)} • LEVEL ${xml(tierLevel)}</text>
+
+    <text x="72" y="500" class="label">OVERALL RANK</text>
+    <text x="1128" y="500" text-anchor="end" class="value" style="font-size:24px">#${xml(rank)} / ${xml(totalUsers)}</text>
+    <text x="1128" y="545" text-anchor="end" class="label">CHATFIGHT</text>
   </svg>`;
 
   return sharp(Buffer.from(svg)).png().toBuffer();
