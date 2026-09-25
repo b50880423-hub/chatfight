@@ -820,6 +820,29 @@ async function announceTierAchievement(ctx, previousMessageCount, newMessageCoun
   if (newTier.level <= previousTier.level) return;
   if (ctx.chat?.type === 'private') return;
 
+  // Claim this exact user/tier transition in MongoDB before sending the
+  // message. This prevents duplicate congratulations when Telegram retries an
+  // update or two bot workers process the same crossing at the same time.
+  const database = await connectDb();
+  const users = database.collection('group_users');
+  const groupId = ctx.chat.id.toString();
+  const tierField = 'lastAnnouncedTierLevel';
+  const claim = await users.findOneAndUpdate(
+    {
+      groupId,
+      userId: String(userId),
+      $or: [
+        { [tierField]: { $exists: false } },
+        { [tierField]: { $lte: previousTier.level } },
+      ],
+    },
+    { $set: { [tierField]: newTier.level, updatedAt: new Date() } },
+    { returnDocument: 'after' },
+  );
+
+  // A different worker already claimed this transition.
+  if (!claim) return;
+
   const safeName = escapeHtml(cleanUnicode(displayName || `User ${userId}`));
   const mention = userId ? `<a href="tg://user?id=${escapeHtml(userId)}">${safeName}</a>` : safeName;
   const message = [
