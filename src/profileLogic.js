@@ -1,3 +1,5 @@
+import { getTier } from './tierLogic.js';
+
 function escapeHtml(value = '') {
   return String(value)
     .replace(/&/g, '&amp;')
@@ -52,6 +54,7 @@ function buildUserLink(user) {
 
 export function formatProfileText(user, rank, totalUsers, contextName) {
   const nameLink = buildUserLink(user);
+  const tier = getTier(user.messageCount || 0);
   const lines = ['<b>ChatFight - Profile</b>'];
 
   if (contextName) {
@@ -61,10 +64,15 @@ export function formatProfileText(user, rank, totalUsers, contextName) {
   lines.push(
     `<b>User:</b> <b>${nameLink}</b>`,
     '',
+    `<b>Title:</b> ${escapeHtml(tier.title)}`,
+    `<b>Level:</b> ${tier.level}`,
     `<b>Total messages:</b> ${formatNumber(user.messageCount || 0)}`,
     `<b>Today messages:</b> ${formatNumber(user.dailyMessageCount || 0)}`,
     `<b>This week:</b> ${formatNumber(user.weeklyMessageCount || 0)}`,
     `<b>Overall rank:</b> #${rank} of ${totalUsers}`,
+    tier.nextTitle
+      ? `<b>Next title:</b> ${escapeHtml(tier.nextTitle)} at ${formatNumber(tier.nextMessages)} messages`
+      : `<b>Title:</b> ${escapeHtml(tier.title)} — MAX LEVEL`,
     `<b>Joined:</b> ${new Date(user.createdAt).toLocaleDateString()}`,
   );
 

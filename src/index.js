@@ -8,6 +8,7 @@ import {
   getISTDayKey,
 } from './rankingLogic.js';
 import { formatProfileText } from './profileLogic.js';
+import { getTier } from './tierLogic.js';
 import { generateRankingImage, generateProfileImage } from './rankingImage.js';
 import { formatGlobalUsersText, formatGlobalGroupsText, formatMyTopGroupsText } from './globalLogic.js';
 import {
@@ -702,7 +703,8 @@ async function checkSpamAndCount(ctx) {
     return;
   }
 
-  await getOrCreateUser(groupId, userId, displayName, userName, groupName, groupLink);
+  const userProgress = await getOrCreateUser(groupId, userId, displayName, userName, groupName, groupLink);
+  await announceTierAchievement(ctx, userProgress.previousMessageCount, userProgress.newMessageCount, displayName, userId);
   await updateGroupStats(groupId, groupName, groupLink, ctx);
   await recordGroupMilestone(groupId, ctx);
 }
@@ -794,13 +796,47 @@ async function getOrCreateUser(groupId, userId, displayName, userName, groupName
   const existing = await users.findOne({ groupId, userId });
   const updatePlan = getUserUpdateForMessage(existing, groupId, userId, displayName, userName, groupName, groupLink, now);
 
+  const previousMessageCount = Number(existing?.messageCount || 0);
+
   if (updatePlan.operation === 'insert') {
     await users.insertOne(updatePlan.doc);
-    return users.findOne({ groupId, userId });
+    const user = await users.findOne({ groupId, userId });
+    return { user, previousMessageCount, newMessageCount: 1 };
   }
 
   await users.updateOne({ groupId, userId }, updatePlan.update);
-  return users.findOne({ groupId, userId });
+  const user = await users.findOne({ groupId, userId });
+  return {
+    user,
+    previousMessageCount,
+    newMessageCount: Number(user?.messageCount || previousMessageCount + 1),
+  };
+}
+
+async function announceTierAchievement(ctx, previousMessageCount, newMessageCount, displayName, userId) {
+  const previousTier = getTier(previousMessageCount);
+  const newTier = getTier(newMessageCount);
+
+  if (newTier.level <= previousTier.level) return;
+  if (ctx.chat?.type === 'private') return;
+
+  const safeName = escapeHtml(cleanUnicode(displayName || `User ${userId}`));
+  const mention = userId ? `<a href="tg://user?id=${escapeHtml(userId)}">${safeName}</a>` : safeName;
+  const message = [
+    '🏆 <b>NEW TITLE ACHIEVED!</b>',
+    '',
+    `Congratulations ${mention}!`,
+    '',
+    `You have reached <b>${escapeHtml(newTier.title)}</b>`,
+    `<b>Level ${newTier.level}</b>`,
+    `<b>${Number(newMessageCount).toLocaleString()} messages</b>`,
+  ].join('\n');
+
+  try {
+    await ctx.reply(message, { parse_mode: 'HTML' });
+  } catch (error) {
+    console.warn('[Tier] Could not announce title achievement:', error.message || error);
+  }
 }
 
 async function getTopUsers(groupId, mode = 'today') {
@@ -1385,8 +1421,10 @@ bot.command('setmessages', async (ctx) => {
   );
 
   const updated = result?.value || result;
-  const newTotal = Number(updated?.messageCount || ((target?.messageCount || 0) + amount));
+  const previousTotal = Number(target?.messageCount || 0);
+  const newTotal = Number(updated?.messageCount || (previousTotal + amount));
   const name = updated?.userName || target?.userName || target?.displayName || `User ${targetId}`;
+  await announceTierAchievement(ctx, previousTotal, newTotal, updated?.displayName || target?.displayName || name, targetId);
   await ctx.reply(`✅ Added ${amount.toLocaleString()} messages to ${name}.\n\n💬 New total: ${newTotal.toLocaleString()}\n🔒 This is saved permanently in MongoDB and will not reset after redeploy.`);
 });
 
