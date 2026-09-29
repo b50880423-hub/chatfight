@@ -505,6 +505,21 @@ async function unbanUser(userId) {
   );
 }
 
+// Manually release a user from automatic rule-violation blocks in every scope.
+// This intentionally does not remove a separate manual ban.
+async function unblockUser(userId) {
+  const database = await connectDb();
+  const statuses = database.collection('user_status');
+  const result = await statuses.updateMany(
+    { userId },
+    {
+      $unset: { blockedUntil: '', blockReason: '', spamCount: '', lastMessageAt: '' },
+      $set: { updatedAt: new Date() },
+    },
+  );
+  return result.modifiedCount;
+}
+
 async function resetUserRankings(userId) {
   const database = await connectDb();
   const users = database.collection('group_users');
@@ -1557,6 +1572,47 @@ bot.command('unbanuser', async (ctx) => {
   const targetId = args[0];
   await unbanUser(targetId);
   await ctx.reply(`User ${escapeHtml(targetId)} has been unbanned.`);
+});
+
+bot.command('unblockuser', async (ctx) => {
+  if (ctx.chat?.id?.toString() !== loggerChatId) {
+    await ctx.reply('Manual unblock controls are available only in the logger group.');
+    return;
+  }
+
+  if (!isOwner(ctx.from?.id)) {
+    await ctx.reply('Only the owner can unblock users.');
+    return;
+  }
+
+  const args = ctx.message.text.split(/\s+/).slice(1).filter(Boolean);
+  if (!args.length) {
+    await ctx.reply('Usage: /unblockuser <user_id|@username>');
+    return;
+  }
+
+  let targetId = args[0].replace(/^@/, '');
+  if (!/^\d+$/.test(targetId)) {
+    const database = await connectDb();
+    const users = database.collection('group_users');
+    const escapedUsername = targetId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const found = await users.findOne({ userName: { $regex: `^${escapedUsername}$`, $options: 'i' } });
+    if (!found?.userId) {
+      await ctx.reply('Unable to locate that user. Use their numeric user ID or a known @username in ChatFight.');
+      return;
+    }
+    targetId = String(found.userId);
+  }
+
+  const modifiedCount = await unblockUser(targetId);
+  await ctx.reply(
+    `User ${escapeHtml(args[0])} (ID: ${escapeHtml(targetId)}) has been manually unblocked from automatic rule-violation blocks.\nUpdated status records: ${modifiedCount}.\nAny separate manual ban remains in place.`,
+    { parse_mode: 'HTML' },
+  );
+  await sendUserNotification(
+    targetId,
+    '<b>ChatFight - Unblocked</b>\nAn owner has manually removed your automatic rule-violation block. You can use the bot again unless a separate ban is still active.',
+  );
 });
 
 bot.action(/banuser:(\d+):(1d|2d|3d|10d|20d|1m|3m|1y|perm|ignore)/, async (ctx) => {
