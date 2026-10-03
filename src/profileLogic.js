@@ -52,28 +52,42 @@ function buildUserLink(user) {
   return href ? `<a href="${escapeHtml(href)}">${name}</a>` : name;
 }
 
-export function formatProfileText(user, rank, totalUsers, contextName) {
+export function formatProfileText(user, rank, totalUsers, contextName, stats = {}) {
   const nameLink = buildUserLink(user);
   const tier = getTier(user.messageCount || 0);
-  const lines = ['<b>ChatFight - Profile</b>'];
+  const local = stats.local || {
+    todayRank: null,
+    weeklyRank: null,
+  };
+  const global = stats.global || {
+    messageCount: user.messageCount || 0,
+    dailyMessageCount: user.dailyMessageCount || 0,
+    weeklyMessageCount: user.weeklyMessageCount || 0,
+    rank: null,
+    totalUsers: null,
+    todayRank: null,
+    weeklyRank: null,
+  };
+  const position = (value) => value ? `#${formatNumber(value)}` : '—';
+  const lines = ['<b>👤 PROFILE</b>'];
 
-  if (contextName) {
-    lines.push(escapeHtml(limitUnicodeName(cleanUnicode(contextName), 100)));
-  }
+  if (contextName) lines.push(`📍 <b>${escapeHtml(limitUnicodeName(cleanUnicode(contextName), 100))}</b>`);
 
   lines.push(
-    `<b>User:</b> <b>${nameLink}</b>`,
     '',
-    `<b>Title:</b> ${escapeHtml(tier.title)}`,
-    `<b>Level:</b> ${tier.level}`,
-    `<b>Total messages:</b> ${formatNumber(user.messageCount || 0)}`,
-    `<b>Today messages:</b> ${formatNumber(user.dailyMessageCount || 0)}`,
-    `<b>This week:</b> ${formatNumber(user.weeklyMessageCount || 0)}`,
-    `<b>Overall rank:</b> #${rank} of ${totalUsers}`,
+    `👤 <b>User:</b> ${nameLink}`,
+    '',
+    `💬 <b>Messages sent here:</b> ${formatNumber(user.messageCount || 0)} (today: ${formatNumber(user.dailyMessageCount || 0)}, this week: ${formatNumber(user.weeklyMessageCount || 0)})`,
+    `🌐 <b>Messages sent globally:</b> ${formatNumber(global.messageCount || 0)} (today: ${formatNumber(global.dailyMessageCount || 0)}, this week: ${formatNumber(global.weeklyMessageCount || 0)})`,
+    '',
+    `📍 <b>Position here:</b> ${position(rank)} of ${formatNumber(totalUsers)} (today: ${position(local.todayRank)}, this week: ${position(local.weeklyRank)})`,
+    `🌍 <b>Global position:</b> ${position(global.rank)}${global.totalUsers ? ` of ${formatNumber(global.totalUsers)}` : ''} (today: ${position(global.todayRank)}, this week: ${position(global.weeklyRank)})`,
+    '',
+    `${tier.medal} <b>${escapeHtml(tier.displayTitle)}</b>`,
+    `🏆 <b>Highest league reached:</b> ${tier.medal} ${escapeHtml(tier.displayTitle)}`,
     tier.nextTitle
-      ? `<b>Next title:</b> ${escapeHtml(tier.nextTitle)} at ${formatNumber(tier.nextMessages)} messages`
-      : `<b>Title:</b> ${escapeHtml(tier.title)} — MAX LEVEL`,
-    `<b>Joined:</b> ${new Date(user.createdAt).toLocaleDateString()}`,
+      ? `— ${formatNumber(tier.messagesRemaining)} messages to the next league (${formatNumber(tier.nextMessages)} total)`
+      : '— Highest league reached',
   );
 
   return lines.join('\n');

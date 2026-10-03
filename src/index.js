@@ -923,23 +923,51 @@ async function getUserProfile(groupId, userId) {
   const database = await connectDb();
   const users = database.collection('group_users');
   const profile = await users.findOne({ groupId, userId });
+  if (!profile) return null;
 
-  if (!profile) {
-    return null;
+  const dayKey = getISTDayKey();
+  const weekKey = getWeekKey();
+  const groupUsers = await users.find({ groupId }).toArray();
+  const totalUsers = groupUsers.length;
+  const rankBy = (items, field, targetUserId) => {
+    const sorted = [...items].sort((a, b) => (Number(b[field] || 0) - Number(a[field] || 0)) || (Number(b.messageCount || 0) - Number(a.messageCount || 0)));
+    const index = sorted.findIndex((item) => String(item.userId) === String(targetUserId));
+    return index < 0 ? null : index + 1;
+  };
+  const localTodayUsers = groupUsers.map((item) => ({ ...item, todayValue: item.dayKey === dayKey ? Number(item.dailyMessageCount || 0) : 0 }));
+  const localWeeklyUsers = groupUsers.map((item) => ({ ...item, weeklyValue: item.weekKey === weekKey ? Number(item.weeklyMessageCount || 0) : 0 }));
+
+  // A user can have one record per group, so combine records by Telegram user ID for global stats.
+  const allRecords = await users.find({}).toArray();
+  const globalByUser = new Map();
+  for (const item of allRecords) {
+    const key = String(item.userId);
+    if (!globalByUser.has(key)) globalByUser.set(key, { userId: key, messageCount: 0, dailyMessageCount: 0, weeklyMessageCount: 0 });
+    const total = globalByUser.get(key);
+    total.messageCount += Number(item.messageCount || 0);
+    if (item.dayKey === dayKey) total.dailyMessageCount += Number(item.dailyMessageCount || 0);
+    if (item.weekKey === weekKey) total.weeklyMessageCount += Number(item.weeklyMessageCount || 0);
   }
-
-  const totalUsers = await users.countDocuments({ groupId });
-  const rankedUsers = await users
-    .find({ groupId })
-    .sort({ messageCount: -1, dailyMessageCount: -1 })
-    .toArray();
-
-  const rank = rankedUsers.findIndex((user) => user.userId === profile.userId) + 1;
+  const globalUsers = [...globalByUser.values()];
+  const globalProfile = globalByUser.get(String(userId)) || { messageCount: 0, dailyMessageCount: 0, weeklyMessageCount: 0 };
 
   return {
     profile,
-    rank,
+    rank: rankBy(groupUsers, 'messageCount', userId),
     totalUsers,
+    stats: {
+      local: {
+        todayRank: rankBy(localTodayUsers, 'todayValue', userId),
+        weeklyRank: rankBy(localWeeklyUsers, 'weeklyValue', userId),
+      },
+      global: {
+        ...globalProfile,
+        rank: rankBy(globalUsers, 'messageCount', userId),
+        totalUsers: globalUsers.length,
+        todayRank: rankBy(globalUsers, 'dailyMessageCount', userId),
+        weeklyRank: rankBy(globalUsers, 'weeklyMessageCount', userId),
+      },
+    },
   };
 }
 
@@ -1509,9 +1537,9 @@ bot.command('profile', async (ctx) => {
   }
 
   const contextName = ctx.chat?.title || ctx.chat?.username || 'this chat';
-  const message = formatProfileText(profileData.profile, profileData.rank, profileData.totalUsers, contextName);
+  const message = formatProfileText(profileData.profile, profileData.rank, profileData.totalUsers, contextName, profileData.stats);
   const profilePhoto = await getTelegramProfilePhoto(userId);
-  const profileWithTier = { ...profileData.profile, tierTitle: getTier(profileData.profile.messageCount || 0).title, tierLevel: getTier(profileData.profile.messageCount || 0).level };
+  const profileWithTier = { ...profileData.profile, tierTitle: getTier(profileData.profile.messageCount || 0).displayTitle, tierLevel: getTier(profileData.profile.messageCount || 0).level };
   const imageBuffer = profilePhoto || await generateProfileImage(profileWithTier, profileData.rank, profileData.totalUsers, contextName);
   await sendPhotoThenText(ctx, imageBuffer, message);
 });
@@ -1664,9 +1692,9 @@ bot.action('welcome:profile', async (ctx) => {
   }
 
   const contextName = ctx.chat?.title || ctx.chat?.username || 'this chat';
-  const message = formatProfileText(profileData.profile, profileData.rank, profileData.totalUsers, contextName);
+  const message = formatProfileText(profileData.profile, profileData.rank, profileData.totalUsers, contextName, profileData.stats);
   const profilePhoto = await getTelegramProfilePhoto(userId);
-  const profileWithTier = { ...profileData.profile, tierTitle: getTier(profileData.profile.messageCount || 0).title, tierLevel: getTier(profileData.profile.messageCount || 0).level };
+  const profileWithTier = { ...profileData.profile, tierTitle: getTier(profileData.profile.messageCount || 0).displayTitle, tierLevel: getTier(profileData.profile.messageCount || 0).level };
   const imageBuffer = profilePhoto || await generateProfileImage(profileWithTier, profileData.rank, profileData.totalUsers, contextName);
   await sendPhotoThenText(ctx, imageBuffer, message);
 });
