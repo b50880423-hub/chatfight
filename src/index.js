@@ -862,13 +862,16 @@ async function announceTierAchievement(ctx, previousMessageCount, newMessageCoun
   const safeName = escapeHtml(cleanUnicode(displayName || `User ${userId}`));
   const mention = `<a href="tg://user?id=${escapeHtml(uid)}">${safeName}</a>`;
   const message = [
-    '🏆 <b>NEW TITLE ACHIEVED!</b>',
+    '🎉 <b>LEAGUE PROMOTION!</b>',
     '',
     `Congratulations ${mention}!`,
     '',
-    `You have reached <b>${escapeHtml(newTier.title)}</b>`,
-    `<b>Level ${newTier.level}</b>`,
-    `<b>${Number(newMessageCount).toLocaleString()} messages</b>`,
+    `You have unlocked ${newTier.medal} <b>${escapeHtml(newTier.displayTitle)}</b>!`,
+    `💬 Total messages: <b>${Number(newMessageCount).toLocaleString()}</b>`,
+    '',
+    newTier.nextTitle
+      ? `🚀 Next goal: <b>${escapeHtml(newTier.nextTitle)}</b> at <b>${Number(newTier.nextMessages).toLocaleString()}</b> messages.`
+      : '👑 You have reached the highest league. Amazing achievement!',
   ].join('\n');
 
   try {
